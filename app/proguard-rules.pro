@@ -1,96 +1,64 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# ProGuard/R8 Rules for Bambu Filament Manager
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# Preserve attributes required for reflection and debugging
+-keepattributes Signature,InnerClasses,AnnotationDefault,EnclosingMethod,Exceptions,*Annotation*,SourceFile,LineNumberTable
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Netty / HiveMQ - Full protection from obfuscation
+-keep class io.netty.** { *; }
+-keepclassmembers class io.netty.** { *; }
+-keep class com.hivemq.client.** { *; }
+-keepclassmembers class com.hivemq.client.** { *; }
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# JCTools - Fix for NoSuchFieldException: consumerIndex / producerIndex
+# RxJava and HiveMQ depend on this for high-performance queues
+-keep class org.jctools.** { *; }
+-keepclassmembers class org.jctools.** { *; }
 
-# Remove debug, verbose, and info logs from release builds for security and performance
+# Specific fix for the 'toLeakAwareBuffer' crash
+-keepclassmembers class * {
+    *** toLeakAwareBuffer(...);
+}
+
+# Preserve internal methods in AbstractByteBufAllocator used by Netty's leak detector
+-keepclassmembernames class io.netty.buffer.AbstractByteBufAllocator {
+    private <methods>;
+}
+
+# RxJava and Dagger
+-keep class io.reactivex.** { *; }
+-keep class dagger.internal.DoubleCheck { *; }
+
+# Data Models (Gson/Room) - Fix for Deserialization failed
+# We keep all fields in your database package to ensure JSON mapping works
+-keep class com.napps.filamentmanager.database.** { *; }
+-keepclassmembers class com.napps.filamentmanager.database.** { *; }
+
+# Suppress warnings for libraries that reference missing classes on Android
+-dontwarn com.google.re2j.Matcher
+-dontwarn com.google.re2j.Pattern
+-dontwarn io.netty.**
+-dontwarn com.hivemq.client.**
+-dontwarn io.reactivex.**
+-dontwarn dagger.internal.**
+-dontwarn org.jctools.**
+-dontwarn javax.naming.**
+-dontwarn org.apache.**
+-dontwarn org.eclipse.jetty.**
+-dontwarn org.slf4j.**
+
+# Room Database rules
+-keep class * extends androidx.room.RoomDatabase
+-dontwarn androidx.room.paging.**
+
+# Remove logs from release
 -assumenosideeffects class android.util.Log {
     public static *** d(...);
     public static *** v(...);
     public static *** i(...);
 }
 
-# Please add these rules to your existing keep rules in order to suppress warnings.
-# This is generated automatically by the Android Gradle plugin.
--dontwarn com.google.re2j.Matcher
--dontwarn com.google.re2j.Pattern
--dontwarn io.netty.channel.epoll.Epoll
--dontwarn io.netty.channel.epoll.EpollEventLoopGroup
--dontwarn io.netty.channel.epoll.EpollSocketChannel
--dontwarn io.netty.handler.codec.http.FullHttpResponse
--dontwarn io.netty.handler.codec.http.HttpClientCodec
--dontwarn io.netty.handler.codec.http.HttpHeaders
--dontwarn io.netty.handler.codec.http.HttpObjectAggregator
--dontwarn io.netty.handler.codec.http.HttpRequest
--dontwarn io.netty.handler.codec.http.websocketx.BinaryWebSocketFrame
--dontwarn io.netty.handler.codec.http.websocketx.CloseWebSocketFrame
--dontwarn io.netty.handler.codec.http.websocketx.ContinuationWebSocketFrame
--dontwarn io.netty.handler.codec.http.websocketx.PingWebSocketFrame
--dontwarn io.netty.handler.codec.http.websocketx.PongWebSocketFrame
--dontwarn io.netty.handler.codec.http.websocketx.TextWebSocketFrame
--dontwarn io.netty.handler.codec.http.websocketx.WebSocketClientHandshaker
--dontwarn io.netty.handler.codec.http.websocketx.WebSocketClientHandshakerFactory
--dontwarn io.netty.handler.codec.http.websocketx.WebSocketFrame
--dontwarn io.netty.handler.codec.http.websocketx.WebSocketHandshakeException
--dontwarn io.netty.handler.codec.http.websocketx.WebSocketVersion
--dontwarn io.netty.handler.proxy.HttpProxyHandler
--dontwarn io.netty.handler.proxy.ProxyHandler
--dontwarn io.netty.handler.proxy.Socks4ProxyHandler
--dontwarn io.netty.handler.proxy.Socks5ProxyHandler
--dontwarn io.netty.internal.tcnative.AsyncSSLPrivateKeyMethod
--dontwarn io.netty.internal.tcnative.AsyncTask
--dontwarn io.netty.internal.tcnative.Buffer
--dontwarn io.netty.internal.tcnative.CertificateCallback
--dontwarn io.netty.internal.tcnative.CertificateCompressionAlgo
--dontwarn io.netty.internal.tcnative.CertificateVerifier
--dontwarn io.netty.internal.tcnative.Library
--dontwarn io.netty.internal.tcnative.SSL
--dontwarn io.netty.internal.tcnative.SSLContext
--dontwarn io.netty.internal.tcnative.SSLPrivateKeyMethod
--dontwarn io.netty.internal.tcnative.SSLSessionCache
--dontwarn io.netty.internal.tcnative.SessionTicketKey
--dontwarn io.netty.internal.tcnative.SniHostNameMatcher
--dontwarn javax.naming.ldap.LdapName
--dontwarn javax.naming.ldap.Rdn
--dontwarn org.apache.log4j.Level
--dontwarn org.apache.log4j.Logger
--dontwarn org.apache.log4j.Priority
--dontwarn org.apache.logging.log4j.Level
--dontwarn org.apache.logging.log4j.LogManager
--dontwarn org.apache.logging.log4j.Logger
--dontwarn org.apache.logging.log4j.message.MessageFactory
--dontwarn org.apache.logging.log4j.spi.ExtendedLogger
--dontwarn org.apache.logging.log4j.spi.ExtendedLoggerWrapper
--dontwarn org.eclipse.jetty.alpn.ALPN$ClientProvider
--dontwarn org.eclipse.jetty.alpn.ALPN$Provider
--dontwarn org.eclipse.jetty.alpn.ALPN$ServerProvider
--dontwarn org.eclipse.jetty.alpn.ALPN
--dontwarn org.eclipse.jetty.npn.NextProtoNego$ClientProvider
--dontwarn org.eclipse.jetty.npn.NextProtoNego$Provider
--dontwarn org.eclipse.jetty.npn.NextProtoNego$ServerProvider
--dontwarn org.eclipse.jetty.npn.NextProtoNego
--dontwarn org.slf4j.ILoggerFactory
--dontwarn org.slf4j.Logger
--dontwarn org.slf4j.LoggerFactory
--dontwarn org.slf4j.Marker
--dontwarn org.slf4j.helpers.FormattingTuple
--dontwarn org.slf4j.helpers.MessageFormatter
--dontwarn org.slf4j.helpers.NOPLoggerFactory
--dontwarn org.slf4j.spi.LocationAwareLogger
+# DO NOT obfuscate class or method names (prevents crashes with reflection/JSON)
+-dontobfuscate
+
+# DO NOT remove unused code (optional, but safer if you want no minification at all)
+#-dontshrink

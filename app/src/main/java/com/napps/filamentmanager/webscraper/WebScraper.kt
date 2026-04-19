@@ -34,17 +34,19 @@ enum class StartPagesOfVendors(val vendor: String, val testHtmlClass: String) {
     }
 }
 
+data class ProductLink(val url: String, val expectedCount: Int)
+
 /**
  * Parses the Bambu Lab store collection page to find all individual product links.
  * 
  * @param html The HTML content of the collection page.
  * @param baseUrl The base URL for resolving relative links.
  * @param testClassName A CSS class name used to identify product grid items.
- * @return A list of absolute URLs to product detail pages.
+ * @return A list of [ProductLink] objects to product detail pages.
  */
-fun parseBambulabStartPage(html: String, baseUrl: String, testClassName: String): List<String>? {
+fun parseBambulabStartPage(html: String, baseUrl: String, testClassName: String): List<ProductLink>? {
     val document: Document = Jsoup.parse(html, baseUrl)
-    val filamentList = mutableListOf<String>()
+    val filamentList = mutableListOf<ProductLink>()
 
     // Use the class name as a starting point, but be flexible
     val productElements = document.getElementsByClass(testClassName)
@@ -53,13 +55,11 @@ fun parseBambulabStartPage(html: String, baseUrl: String, testClassName: String)
         android.util.Log.w("WebScraper", "No elements found with class '$testClassName'. Trying fallback...")
         // Fallback: try to find any links containing "/products/" if the wrapper class failed
         val allLinks = document.select("a[href*=/products/]")
-        android.util.Log.d("WebScraper", "Found ${allLinks.size} links with '/products/'")
         for (link in allLinks) {
             val url = link.absUrl("href")
-            // Filter out common non-filament links if necessary, 
-            // but usually the start page is specific enough.
             if (!url.contains("google.com") && !url.contains("facebook.com")) {
-                filamentList.add(url)
+                // In fallback mode, we assume 1 color per link if we can't find the count
+                filamentList.add(ProductLink(url, 1))
             }
         }
     } else {
@@ -67,12 +67,19 @@ fun parseBambulabStartPage(html: String, baseUrl: String, testClassName: String)
         for (productElement in productElements) {
             val linkElement = productElement.select("a[href]").first()
             if (linkElement != null) {
-                filamentList.add(linkElement.absUrl("href"))
+                val url = linkElement.absUrl("href")
+                
+                // Try to find "X colors available" text
+                val colorText = productElement.text()
+                val match = Regex("(\\d+)\\s+colors?").find(colorText)
+                val count = match?.groupValues?.get(1)?.toIntOrNull() ?: 1
+                
+                filamentList.add(ProductLink(url, count))
             }
         }
     }
 
-    return if (filamentList.isEmpty()) null else filamentList.distinct()
+    return if (filamentList.isEmpty()) null else filamentList.distinctBy { it.url }
 }
 
 /**
@@ -84,17 +91,21 @@ fun parseBambulabStartPage(html: String, baseUrl: String, testClassName: String)
  * @param html The HTML content of the product page.
  * @return A list of [VendorFilament] entities found on the page.
  */
-fun parseBambulabProductPage(html: String): List<VendorFilament>? {
+fun parseBambulabProductPage(html: String, isJsonOnly: Boolean = false): List<VendorFilament>? {
     val filamentList = mutableListOf<VendorFilament>()
 
     try {
-        // 1. Extract content between <script id="product-jsonld"...> and </script>
-        val scriptTagId = "id=\"product-jsonld\""
-        if (!html.contains(scriptTagId)) return null
+        val jsonString = if (isJsonOnly) {
+            html
+        } else {
+            // 1. Extract content between <script id="product-jsonld"...> and </script>
+            val scriptTagId = "id=\"product-jsonld\""
+            if (!html.contains(scriptTagId)) return null
 
-        val jsonString = html.substringAfter(scriptTagId)
-            .substringAfter(">")
-            .substringBefore("</script>")
+            html.substringAfter(scriptTagId)
+                .substringAfter(">")
+                .substringBefore("</script>")
+        }
 
         val root = JSONObject(jsonString)
         val brandName = root.getJSONObject("brand").getString("name")

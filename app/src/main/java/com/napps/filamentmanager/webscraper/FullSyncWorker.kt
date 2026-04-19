@@ -69,22 +69,25 @@ class FullSyncWorker(
         val dao = database.vendorFilamentsDao()
         val userPrefs = UserPreferencesRepository(appContext)
         
+        var lastException: Exception? = null
+        
         while (retryCount < 2) {
             try {
-                return@withContext withTimeout(120000) { // 2 minute timeout
+                return@withContext withTimeout(180000) { // Increased to 3 minutes for full sync
                     runSyncLogic(dao, userPrefs)
                 }
             } catch (e: Exception) {
+                lastException = e
                 retryCount++
                 if (retryCount < 2) {
-                    NotificationGroupManager.updateStatus(appContext, "FullSyncWorker", "Sync timeout, retrying ($retryCount/2)...", "sync_channel_Status")
-                    delay(2000) // Small delay before retry
-                } else {
-                    handleFailure(dao, e)
-                    return@withContext Result.failure()
+                    NotificationGroupManager.updateStatus(appContext, "FullSyncWorker", "Sync issue, retrying ($retryCount/2)...", "sync_channel_Status")
+                    delay(5000) // 5 second delay before retry
                 }
             }
         }
+        
+        // If we are here, it means all retries failed
+        lastException?.let { handleFailure(dao, it) }
         Result.failure()
     }
 
@@ -116,8 +119,8 @@ class FullSyncWorker(
             }
 
             // Step 2: Sync each product page
-            val syncList = syncEngine.sync(productLinks, StartPagesOfVendors.BAMBU_LAB) { current, total ->
-                val progressText = "Full sync: $current/$total"
+            val syncList = syncEngine.sync(productLinks, StartPagesOfVendors.BAMBU_LAB) { pagesDone, totalPages, success, failed ->
+                val progressText = "Full sync: $pagesDone/$totalPages | Success: $success | Failed: $failed"
                 NotificationGroupManager.updateStatus(appContext, "FullSyncWorker", progressText, "sync_channel_Status")
                 
                 workerScope.launch(Dispatchers.IO) {
@@ -140,12 +143,15 @@ class FullSyncWorker(
                 }
             }
 
-            postCompletionNotification(
-                appContext, 
-                "Full Sync Complete", 
-                "Synced ${productLinks.size} product types and updated ${syncList.size} filaments."
-            )
-            NotificationGroupManager.updateStatus(appContext, "FullSyncWorker", "Full sync completed (${syncList.size} items).", "sync_channel_Status")
+            val finalCount = syncList.size
+            val totalPages = productLinks.size
+            val totalVariantsExpected = productLinks.sumOf { it.expectedCount }
+            
+            val completionTitle = if (finalCount < totalVariantsExpected * 0.9) "Partial Sync Complete" else "Full Sync Complete"
+            val completionMessage = "Pages: $totalPages/$totalPages | Filaments: $finalCount"
+
+            postCompletionNotification(appContext, completionTitle, completionMessage)
+            NotificationGroupManager.updateStatus(appContext, "FullSyncWorker", "Full sync completed ($finalCount items).", "sync_channel_Status")
             
             Result.success()
         } catch (e: Exception) {
@@ -164,7 +170,15 @@ class FullSyncWorker(
                 dao.update(menuText.copy(text = statusText))
             }
         }
-        postFailureNotification(appContext, "Full Sync Failed", "The sync timed out or encountered an error. Tap to try again.")
+        
+        val userFriendlyMessage = when (e) {
+            is HeadlessWebViewSync.CloudflareChallengeException -> "Verification needed. Open the store in a browser once to clear the Cloudflare check."
+            is HeadlessWebViewSync.LanguageMismatchException -> e.message ?: "The store page is not in English."
+            is kotlinx.coroutines.TimeoutCancellationException -> "Sync timed out. Your connection might be too slow."
+            else -> "The sync encountered an error. Tap to try again."
+        }
+
+        postFailureNotification(appContext, "Full Sync Failed", userFriendlyMessage)
         NotificationGroupManager.updateStatus(appContext, "FullSyncWorker", "Error: ${e.message}", "sync_channel_Status")
     }
 

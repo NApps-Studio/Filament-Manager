@@ -76,7 +76,11 @@ class SyncWorker(
 
         val syncEngine = HeadlessWebViewSync(appContext)
         try {
-            val syncList = syncEngine.sync(links, StartPagesOfVendors.BAMBU_LAB)
+            val productLinks = links.map { ProductLink(it, 1) } // Wrap strings into ProductLink objects
+            val syncList = syncEngine.sync(productLinks, StartPagesOfVendors.BAMBU_LAB) { pagesDone, totalPages, success, failed ->
+                val progressText = "Checking: $pagesDone/$totalPages | Success: $success | Failed: $failed"
+                NotificationGroupManager.updateStatus(appContext, "SyncWorker", progressText, "sync_channel_Status")
+            }
             
             // Check if we were redirected to a non-English page and need to retry
             // The HeadlessWebViewSync already handles internal reload, 
