@@ -72,18 +72,21 @@ class FullSyncWorker(
         val userPrefs = UserPreferencesRepository(appContext)
         
         var lastException: Exception? = null
+        val maxRetries = 3
         
-        while (retryCount < 2) {
+        while (retryCount < maxRetries) {
             try {
-                return@withContext withTimeout(180000) { // Increased to 3 minutes for full sync
+                // Increased to 10 minutes for full sync to account for many pages and retries
+                return@withContext withTimeout(600000) { 
                     runSyncLogic(dao, userPrefs)
                 }
             } catch (e: Exception) {
                 lastException = e
                 retryCount++
-                if (retryCount < 2) {
-                    NotificationGroupManager.updateStatus(appContext, "FullSyncWorker", "Sync issue, retrying ($retryCount/2)...", "sync_channel_Status")
-                    delay(5000) // 5 second delay before retry
+                if (retryCount < maxRetries) {
+                    val retryMsg = "Sync issue, retrying ($retryCount/$maxRetries)..."
+                    NotificationGroupManager.updateStatus(appContext, "FullSyncWorker", retryMsg, "sync_channel_Status")
+                    delay(10000) // 10 second delay before retry
                 }
             }
         }

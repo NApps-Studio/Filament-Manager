@@ -79,58 +79,82 @@ class HeadlessWebViewSync(private val context: Context) {
                 val pagesDone = index + 1
                 val link = productLink.url
                 
-                val htmlRaw = loadPageAndGetHtml(wv, link)
-                val html = unescapeHtml(htmlRaw ?: "")
-
-                if (html.isEmpty()) {
-                    pageFailures++
-                    errors.add("Failed to load page: $link")
-                    onProgress(pagesDone, totalPages, filamentsSuccess, pageFailures)
-                    continue
-                }
-
-                if (isCloudflareChallenge(html)) {
-                    throw CloudflareChallengeException("Cloudflare challenge detected")
-                }
-
-                if (!isEnglish(html)) {
-                    pageFailures++
-                    errors.add("Language mismatch (not English) on: $link")
-                    onProgress(pagesDone, totalPages, filamentsSuccess, pageFailures)
-                    continue
-                }
-
-                var syncedFilaments: List<VendorFilament>? = emptyList()
-                for (attempt in 1..7) {
-                    delay(750.milliseconds)
-                    val jsonLdRaw = wv.evaluateJavascriptSync("document.getElementById('product-jsonld')?.innerHTML")
-                    val jsonLd = unescapeHtml(jsonLdRaw ?: "").trim().removeSurrounding("\"")
-                    
-                    if (jsonLd.isNotEmpty() && jsonLd != "null") {
-                        syncedFilaments = parseBambulabProductPage(jsonLd, isJsonOnly = true)
-                    }
-
-                    if (syncedFilaments.isNullOrEmpty()) {
-                        val currentRawHtml = wv.evaluateJavascriptSync("(function() { return document.documentElement.outerHTML; })();")
-                        val currentHtml = unescapeHtml(currentRawHtml ?: "")
-                        syncedFilaments = parseBambulabProductPage(currentHtml)
-                    }
-
-                    if (!syncedFilaments.isNullOrEmpty()) {
-                        finalFilaments.addAll(syncedFilaments)
-                        filamentsSuccess += syncedFilaments.size
-                        break
-                    }
-                }
+                var success = false
+                var attempts = 0
+                val maxAttempts = 3
                 
-                if (syncedFilaments.isNullOrEmpty()) {
-                    pageFailures++
-                    errors.add("Failed to parse variants from: $link")
+                while (attempts < maxAttempts && !success) {
+                    attempts++
+                    val htmlRaw = loadPageAndGetHtml(wv, link)
+                    val html = unescapeHtml(htmlRaw ?: "")
+
+                    if (html.isEmpty()) {
+                        if (attempts < maxAttempts) {
+                            delay(2000)
+                            continue
+                        } else {
+                            pageFailures++
+                            errors.add("Failed to load page: $link")
+                            break
+                        }
+                    }
+
+                    if (isCloudflareChallenge(html)) {
+                        if (attempts < maxAttempts) {
+                            Log.d("Sync", "Cloudflare detected, waiting and retrying... ($attempts/$maxAttempts)")
+                            delay(5000) // Wait for potential JS challenge to resolve
+                            continue
+                        } else {
+                            throw CloudflareChallengeException("Cloudflare challenge detected and could not be bypassed after $maxAttempts attempts.")
+                        }
+                    }
+
+                    if (!isEnglish(html)) {
+                        if (attempts < maxAttempts) {
+                            Log.d("Sync", "Language mismatch detected, retrying... ($attempts/$maxAttempts)")
+                            delay(2000)
+                            continue
+                        } else {
+                            pageFailures++
+                            errors.add("Language mismatch (not English) on: $link")
+                            break
+                        }
+                    }
+
+                    var syncedFilaments: List<VendorFilament>? = emptyList()
+                    // Try parsing multiple times if needed, as content might be dynamic
+                    for (parseAttempt in 1..5) {
+                        delay(750.milliseconds)
+                        val jsonLdRaw = wv.evaluateJavascriptSync("document.getElementById('product-jsonld')?.innerHTML")
+                        val jsonLd = unescapeHtml(jsonLdRaw ?: "").trim().removeSurrounding("\"")
+                        
+                        if (jsonLd.isNotEmpty() && jsonLd != "null") {
+                            syncedFilaments = parseBambulabProductPage(jsonLd, isJsonOnly = true)
+                        }
+
+                        if (syncedFilaments.isNullOrEmpty()) {
+                            val currentRawHtml = wv.evaluateJavascriptSync("(function() { return document.documentElement.outerHTML; })();")
+                            val currentHtml = unescapeHtml(currentRawHtml ?: "")
+                            syncedFilaments = parseBambulabProductPage(currentHtml)
+                        }
+
+                        if (!syncedFilaments.isNullOrEmpty()) {
+                            finalFilaments.addAll(syncedFilaments)
+                            filamentsSuccess += syncedFilaments.size
+                            success = true
+                            break
+                        }
+                    }
+                    
+                    if (syncedFilaments.isNullOrEmpty() && attempts == maxAttempts) {
+                        pageFailures++
+                        errors.add("Failed to parse variants from: $link")
+                    }
                 }
                 onProgress(pagesDone, totalPages, filamentsSuccess, pageFailures)
             }
         } catch (e: CloudflareChallengeException) {
-            errors.add("Sync blocked by Cloudflare")
+            errors.add(e.message ?: "Sync blocked by Cloudflare")
         } finally {
             wv.destroy()
             webView = null
@@ -172,17 +196,31 @@ class HeadlessWebViewSync(private val context: Context) {
         val isStartPage = url == startLink
 
         // Initial load
-        val firstHtmlRaw = loadPageAndGetHtml(wv, url)
-        var cleanHtml = unescapeHtml(firstHtmlRaw ?: "")
+        var currentHtmlRaw = loadPageAndGetHtml(wv, url)
+        var cleanHtml = unescapeHtml(currentHtmlRaw ?: "")
         
-        if (!isEnglish(cleanHtml)) {
-            throw LanguageMismatchException("The store page is not in English. Please try again.")
+        // Retry loop for English/Cloudflare on initial load
+        var loadAttempts = 0
+        while (loadAttempts < 3 && (cleanHtml.isEmpty() || !isEnglish(cleanHtml) || isCloudflareChallenge(cleanHtml))) {
+            loadAttempts++
+            if (isCloudflareChallenge(cleanHtml)) {
+                delay(5000)
+            } else {
+                delay(2000)
+            }
+            currentHtmlRaw = if (!isEnglish(cleanHtml) && !url.contains("lang=en-US")) {
+                val langUrl = if (url.contains("?")) "$url&lang=en-US" else "$url?lang=en-US"
+                loadPageAndGetHtml(wv, langUrl)
+            } else {
+                wv.evaluateJavascriptSync("(function() { return document.documentElement.outerHTML; })();")
+            }
+            cleanHtml = unescapeHtml(currentHtmlRaw ?: "")
         }
 
         // If it's the start page, we wait and retry a few times to let the grid render
         if (isStartPage) {
-            var attempts = 0
-            while (attempts < 5) {
+            var gridAttempts = 0
+            while (gridAttempts < 5) {
                 // Check if the product list is actually there
                 val links = parseBambulabStartPage(cleanHtml, url, StartPagesOfVendors.BAMBU_LAB.testHtmlClass)
                 if (!links.isNullOrEmpty()) {
@@ -193,10 +231,9 @@ class HeadlessWebViewSync(private val context: Context) {
                 delay(1000.milliseconds)
                 val nextHtmlRaw = wv.evaluateJavascriptSync("(function() { return document.documentElement.outerHTML; })();")
                 cleanHtml = unescapeHtml(nextHtmlRaw ?: "")
-                attempts++
+                gridAttempts++
             }
         } else {
-            // For other pages, just return the first result
             finalHtml = cleanHtml
         }
 
@@ -240,20 +277,19 @@ class HeadlessWebViewSync(private val context: Context) {
     }
 
     private fun isEnglish(html: String): Boolean {
-        // We only look at the first 1000 characters to find the <html> tag
-        val header = html.take(1000).lowercase()
+        // We look at more characters to find the <html> tag and lang attribute
+        val header = html.take(2000).lowercase()
         
-        // Flexible check: Does the string contain <html and does it have lang="en" or lang='en'
-        // This works even if there are classes or other attributes before/after 'lang'
         val hasHtmlTag = header.contains("<html")
-        val hasEnglishLang = header.contains("lang=\"en\"") || header.contains("lang='en'") || header.contains("lang=en")
+        // Flexible check: Match lang="en", lang="en-US", lang='en', etc.
+        val hasEnglishLang = header.contains("lang=\"en") || header.contains("lang='en") || header.contains("lang=en")
         
         if (hasHtmlTag && hasEnglishLang) {
             return true
         }
 
         // Fallback: Check for common English keywords that would be localized on other pages
-        val indicators = listOf("Cart", "Account", "Accessories", "Filament")
+        val indicators = listOf("Cart", "Account", "Accessories", "Filament", "Support", "Store")
         return indicators.any { html.contains(it, ignoreCase = false) }
     }
 
