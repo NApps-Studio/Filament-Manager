@@ -2,6 +2,16 @@
 
 **Filament Manager** is an open-source Android application that currently supports only the Bambu Lab ecosystem. It helps users manage their 3D printing filament inventory, monitor printer status, and synchronize data directly with Bambu Lab AMS units.
 
+## Screenshots
+<p align="center">
+  <img src="Screenshots/Screenshot_20260418_195247_Filament Manager.jpg" width="30%" />
+  <img src="Screenshots/Screenshot_20260418_195302_Filament Manager.jpg" width="30%" />
+  <img src="Screenshots/Screenshot_20260418_195523_Filament Manager.jpg" width="30%" />
+  <br>
+  <img src="Screenshots/Screenshot_20260418_195549_Filament Manager.jpg" width="30%" />
+  <img src="Screenshots/Screenshot_20260418_210133_Filament Manager.jpg" width="30%" />
+</p>
+
 ## About This Project
 This is my very first Android development project. To bring this idea to life, I utilized **AI assistance** to help write, debug, and document the code. The goal was to create a functional, modern tool for the 3D printing community while learning the ropes of Android development.
 
