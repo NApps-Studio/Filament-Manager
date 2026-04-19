@@ -56,6 +56,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.napps.filamentmanager.ui.SyncRequiredDialog
 import com.napps.filamentmanager.ui.SyncWarningDialog
 import com.napps.filamentmanager.ui.WarningIconOverlay
+import com.napps.filamentmanager.ui.SyncReportsScreen
 import com.napps.filamentmanager.webscraper.FullSyncWorker
 import com.napps.filamentmanager.webscraper.SyncWorker
 import com.napps.filamentmanager.webscraper.StartPagesOfVendors
@@ -81,12 +82,25 @@ fun AvailabilityScreen(
     viewModel: VendorFilamentsViewModel,
     inventoryViewModel: FilamentInventoryViewModel,
     bambuViewModel: BambuViewModel,
+    syncReportViewModel: SyncReportViewModel,
     userPrefs: UserPreferencesRepository,
-    tourTargets: SnapshotStateMap<String, Rect> = remember { mutableStateMapOf() },
+    tourTargets: SnapshotStateMap<String, Rect> = remember { mutableStateOf(mutableMapOf<String, Rect>()) }.value as SnapshotStateMap<String, Rect>,
     isTourActive: Boolean = false,
     scrollState: ScrollState = rememberScrollState(),
-    expandedTrackers: SnapshotStateMap<Int, Boolean> = remember { mutableStateMapOf() }
+    expandedTrackers: SnapshotStateMap<Int, Boolean> = remember { mutableStateOf(mutableMapOf<Int, Boolean>()) }.value as SnapshotStateMap<Int, Boolean>
 ) {
+    val showSyncReports by syncReportViewModel.isShowingReports.collectAsStateWithLifecycle()
+
+    if (showSyncReports) {
+        SyncReportsScreen(
+            viewModel = syncReportViewModel,
+            onBack = { syncReportViewModel.setShowingReports(false) },
+            tourTargets = tourTargets,
+            isTourActive = isTourActive
+        )
+        return
+    }
+
     var showAddTrackerDialog by remember { mutableStateOf(false) }
     var showSyncRequiredPopup by remember { mutableStateOf(false) }
     val availabilityTopBarTitleRow1: AvailabilityMenuText? by viewModel.getMenuText("TopMenuRow1").observeAsState()
@@ -121,6 +135,8 @@ fun AvailabilityScreen(
     var isInitialized by rememberSaveable { mutableStateOf(false) }
     var showNonEditable by rememberSaveable { mutableStateOf(false) }
 
+    val unreadReportsCount by syncReportViewModel.unreadErrorCount.collectAsState(initial = 0)
+    
     val lifecycleOwner = LocalLifecycleOwner.current
 
     val exportTrackersLauncher = rememberLauncherForActivityResult(
@@ -289,14 +305,15 @@ fun AvailabilityScreen(
 
     Scaffold(
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = {
-                    if (hasFirstSyncFinished) {
-                        showAddTrackerDialog = true
-                    } else {
-                        showSyncRequiredPopup = true
-                    }
-                },
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                FloatingActionButton(
+                    onClick = {
+                        if (hasFirstSyncFinished) {
+                            showAddTrackerDialog = true
+                        } else {
+                            showSyncRequiredPopup = true
+                        }
+                    },
                 containerColor = if (hasFirstSyncFinished)
                     MaterialTheme.colorScheme.primaryContainer
                 else
@@ -315,12 +332,7 @@ fun AvailabilityScreen(
                     }
                 }
             }
-
-            if (showSyncRequiredPopup) {
-                SyncRequiredDialog(
-                    onDismiss = { showSyncRequiredPopup = false }
-                )
-            }
+        }
         },
         topBar = {
             Surface(
@@ -359,18 +371,31 @@ fun AvailabilityScreen(
 
                     Box {
                         IconButton(onClick = { showMenu = true }) {
-                            Icon(
-                                Icons.Default.MoreVert, 
-                                contentDescription = "More Menu",
-                                modifier = Modifier.tourTarget("avail_more", tourTargets)
-                            )
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    Icons.Default.MoreVert, 
+                                    contentDescription = "More Menu",
+                                    modifier = Modifier.tourTarget("avail_more", tourTargets)
+                                )
+                                if (unreadReportsCount > 0) {
+                                    Icon(
+                                        Icons.Default.PriorityHigh,
+                                        contentDescription = "New Sync Reports",
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier
+                                            .size(16.dp)
+                                            .align(Alignment.TopEnd)
+                                            .offset(x = 4.dp, y = (-4).dp)
+                                    )
+                                }
+                            }
                         }
                         DropdownMenu(
                             expanded = showMenu,
                             onDismissRequest = { 
                                 showMenu = false
-                            },
-                            content = {
+                            }
+                        ) {
                                 DropdownMenuItem(
                                     text = { Text("Export Trackers (JSON)") },
                                     onClick = {
@@ -418,6 +443,7 @@ fun AvailabilityScreen(
                                 HorizontalDivider()
                                 DropdownMenuItem(
                                     text = { Text("Full Sync") },
+                                    leadingIcon = { Icon(Icons.Default.Sync, contentDescription = null) },
                                     onClick = {
                                         showMenu = false
                                         scope.launch {
@@ -432,13 +458,38 @@ fun AvailabilityScreen(
                                 )
                                 DropdownMenuItem(
                                     text = { Text("Update Availability") },
+                                    leadingIcon = { Icon(Icons.Default.CloudSync, contentDescription = null) },
                                     onClick = {
                                         showMenu = false
                                         SyncWorker.enqueue(appContext, immediate = true)
                                     }
                                 )
-                            }
-                        )
+                                HorizontalDivider()
+                                DropdownMenuItem(
+                                    text = { 
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text("Sync Reports")
+                                            if (unreadReportsCount > 0) {
+                                                Spacer(Modifier.width(8.dp))
+                                                Badge(containerColor = MaterialTheme.colorScheme.error) {
+                                                    Text(unreadReportsCount.toString())
+                                                }
+                                            }
+                                        }
+                                    },
+                                    leadingIcon = { 
+                                        Icon(
+                                            if (unreadReportsCount > 0) Icons.Default.PriorityHigh else Icons.Default.Description,
+                                            contentDescription = null,
+                                            tint = if (unreadReportsCount > 0) MaterialTheme.colorScheme.error else LocalContentColor.current
+                                        ) 
+                                    },
+                                    onClick = {
+                                        showMenu = false
+                                        syncReportViewModel.setShowingReports(true)
+                                    }
+                                )
+                        }
                     }
                 }
             }
@@ -472,6 +523,12 @@ fun AvailabilityScreen(
                 )
             }
             
+            if (showSyncRequiredPopup) {
+                SyncRequiredDialog(
+                    onDismiss = { showSyncRequiredPopup = false }
+                )
+            }
+
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -836,7 +893,7 @@ fun AddTrackerDialog(
             if (showAddFilamentDialog) {
                 AddFilamentDialog(
                     onDismiss = { showAddFilamentDialog = false },
-                    onAddFilaments = { pNewFilaments ->
+                    onAddFilaments = { pNewFilaments: List<VendorFilament> ->
                         newFilaments.clear()
                         newFilaments.addAll(pNewFilaments)
                         showAddFilamentDialog = false

@@ -13,6 +13,8 @@ import com.napps.filamentmanager.database.AppDatabase
 import com.napps.filamentmanager.database.AvailabilityMenuText
 import com.napps.filamentmanager.database.UserPreferencesRepository
 import com.napps.filamentmanager.database.VendorFilament
+import com.napps.filamentmanager.database.SyncReport
+import com.google.gson.Gson
 import com.napps.filamentmanager.util.NotificationGroupManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -76,17 +78,26 @@ class SyncWorker(
 
         val syncEngine = HeadlessWebViewSync(appContext)
         try {
-            val productLinks = links.map { ProductLink(it, 1) } // Wrap strings into ProductLink objects
-            val syncList = syncEngine.sync(productLinks, StartPagesOfVendors.BAMBU_LAB) { pagesDone, totalPages, success, failed ->
+            val productLinks = links.map { ProductLink(it, 1) }
+            val syncResult = syncEngine.sync(productLinks, StartPagesOfVendors.BAMBU_LAB, "Background Update") { pagesDone, totalPages, success, failed ->
                 val progressText = "Checking: $pagesDone/$totalPages | Success: $success | Failed: $failed"
                 NotificationGroupManager.updateStatus(appContext, "SyncWorker", progressText, "sync_channel_Status")
             }
             
-            // Check if we were redirected to a non-English page and need to retry
-            // The HeadlessWebViewSync already handles internal reload, 
-            // but if it still fails to parse English keywords, we might want to check here.
+            val syncList = syncResult.filaments
             
             withContext(Dispatchers.IO) {
+                val report = SyncReport(
+                    syncType = "Background Update",
+                    summary = syncResult.summary,
+                    details = syncResult.details,
+                    affectedVariants = syncResult.affectedVariants,
+                    errorCount = syncResult.errorCount,
+                    isError = syncResult.isError,
+                    syncedContent = Gson().toJson(syncList)
+                )
+                AppDatabase.getDatabase(appContext).syncReportDao().insert(report)
+
                 syncList.forEach { syncItem ->
                     val existing = dao.getFilamentBySku(syncItem.sku ?: "-1")
                     if (existing != null) {
@@ -139,9 +150,31 @@ class SyncWorker(
             Result.success()
         } catch (e: HeadlessWebViewSync.CloudflareChallengeException) {
             NotificationGroupManager.updateStatus(appContext, "SyncWorker", "Manual action required (Cloudflare)", "sync_channel_Status")
+            withContext(Dispatchers.IO) {
+                val report = SyncReport(
+                    syncType = "Background Update",
+                    summary = "Sync blocked by Cloudflare",
+                    details = "Manual verification required in store",
+                    affectedVariants = 0,
+                    errorCount = 1,
+                    isError = true
+                )
+                AppDatabase.getDatabase(appContext).syncReportDao().insert(report)
+            }
             Result.retry()
         } catch (e: Exception) {
             NotificationGroupManager.updateStatus(appContext, "SyncWorker", "Error: ${e.message}", "sync_channel_Status")
+            withContext(Dispatchers.IO) {
+                val report = SyncReport(
+                    syncType = "Background Update",
+                    summary = "Critical sync failure",
+                    details = "Error: ${e.message}",
+                    affectedVariants = 0,
+                    errorCount = 1,
+                    isError = true
+                )
+                AppDatabase.getDatabase(appContext).syncReportDao().insert(report)
+            }
             Result.failure()
         }
     }

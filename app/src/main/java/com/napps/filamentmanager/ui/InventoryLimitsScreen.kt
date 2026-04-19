@@ -1,4 +1,4 @@
-package com.napps.filamentmanager
+package com.napps.filamentmanager.ui
 
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -6,9 +6,24 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -16,7 +31,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Adjust
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ArrowDropUp
 import androidx.compose.material.icons.filled.Check
@@ -26,14 +40,47 @@ import androidx.compose.material.icons.filled.Nfc
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.ContentCopy
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FabPosition
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SecondaryTabRow
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Tab
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.livedata.observeAsState
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
@@ -47,30 +94,31 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowCompat
-import com.napps.filamentmanager.database.*
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.napps.filamentmanager.database.FilamentInventory
+import com.napps.filamentmanager.database.FilamentInventoryViewModel
+import com.napps.filamentmanager.database.InventoryLimit
+import com.napps.filamentmanager.database.InventoryLimitViewModel
+import com.napps.filamentmanager.database.LimitWithFilaments
+import com.napps.filamentmanager.database.UserPreferencesRepository
+import com.napps.filamentmanager.database.VendorFilament
+import com.napps.filamentmanager.database.VendorFilamentsViewModel
+import com.napps.filamentmanager.formatMass
 import com.napps.filamentmanager.util.DynamicCsvHelper
 import com.napps.filamentmanager.util.tourTarget
-import com.napps.filamentmanager.util.TourOverlay
-import com.napps.filamentmanager.util.TourStep
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.runtime.snapshots.SnapshotStateMap
-import com.napps.filamentmanager.ui.WarningIconOverlay
-import com.napps.filamentmanager.ui.SyncWarningDialog
-import com.napps.filamentmanager.webscraper.FullSyncWorker
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
  * UI for managing and monitoring filament inventory limits.
- * 
+ *
  * This screen allows users to:
  * 1. Define "Limits": Requirements for a minimum number of spools for specific filament groups.
  * 2. Track Real-time Stock: View current inventory levels against defined thresholds.
  * 3. Import/Export: Backup and restore limit configurations via robust JSON (handling name-based matching).
- * 4. Automatic Sync: Integrates with [VendorFilamentsViewModel] to sync limits with store trackers.
- * 
- * A "Limit" is considered triggered if the number of spools above the [minWeightThreshold] 
+ * 4. Automatic Sync: Integrates with [com.napps.filamentmanager.database.VendorFilamentsViewModel] to sync limits with store trackers.
+ *
+ * A "Limit" is considered triggered if the number of spools above the [minWeightThreshold]
  * drops below [minFilamentsNeeded].
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -80,7 +128,7 @@ fun InventoryLimitsScreen(
     inventoryViewModel: FilamentInventoryViewModel,
     vendorViewModel: VendorFilamentsViewModel,
     tourTargets: SnapshotStateMap<String, Rect>,
-    lazyListState: androidx.compose.foundation.lazy.LazyListState = androidx.compose.foundation.lazy.rememberLazyListState(),
+    lazyListState: LazyListState = rememberLazyListState(),
     expandedLimits: MutableMap<Int, Boolean> = remember { mutableStateMapOf() },
     onBack: () -> Unit
 ) {
@@ -92,17 +140,21 @@ fun InventoryLimitsScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val userPrefs = remember { UserPreferencesRepository(context) }
-    
+
     val isLibraryEmpty by vendorViewModel.hasAnyFilaments.observeAsState(initial = false).let { state ->
         derivedStateOf { !state.value }
     }
-    
+
     val hasFirstSyncFinished by vendorViewModel.hasFirstSyncFinished.collectAsStateWithLifecycle(initialValue = true)
     val ignoreSyncWarning by inventoryViewModel.ignoreSyncWarning.collectAsStateWithLifecycle()
     var showSyncWarning by remember { mutableStateOf(false) }
 
     var showImportDialog by remember { mutableStateOf(false) }
-    var pendingLimitImportList by remember { mutableStateOf<List<Pair<Map<String, String>, List<Map<String, String>>>>>(emptyList()) }
+    var pendingLimitImportList by remember {
+        mutableStateOf<List<Pair<Map<String, String>, List<Map<String, String>>>>>(
+            emptyList()
+        )
+    }
 
     val exportLimitsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json")
@@ -123,7 +175,8 @@ fun InventoryLimitsScreen(
     ) { uri ->
         uri?.let {
             scope.launch(Dispatchers.IO) {
-                val content = context.contentResolver.openInputStream(it)?.bufferedReader()?.use { it.readText() }
+                val content = context.contentResolver.openInputStream(it)?.bufferedReader()
+                    ?.use { it.readText() }
                 content?.let { json ->
                     val importedLimits = DynamicCsvHelper.importLimitsFromRobustJson(json)
                     if (importedLimits.isNotEmpty()) {
@@ -212,7 +265,10 @@ fun InventoryLimitsScreen(
         ) { padding ->
             Box(modifier = Modifier.padding(padding).fillMaxSize()) {
                 if (limits.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
                         Text("No limits configured", style = MaterialTheme.typography.bodyLarge)
                     }
                 } else {
@@ -228,8 +284,15 @@ fun InventoryLimitsScreen(
                                 limitWithFilaments = limitWithFilaments,
                                 inventoryViewModel = inventoryViewModel,
                                 isExpanded = expandedLimits[limitWithFilaments.limit.id] ?: false,
-                                onExpandChange = { expandedLimits[limitWithFilaments.limit.id] = it },
-                                onToggleActive = { active -> viewModel.toggleLimitActive(limitWithFilaments.limit.id, active) },
+                                onExpandChange = {
+                                    expandedLimits[limitWithFilaments.limit.id] = it
+                                },
+                                onToggleActive = { active ->
+                                    viewModel.toggleLimitActive(
+                                        limitWithFilaments.limit.id,
+                                        active
+                                    )
+                                },
                                 onClick = {
                                     selectedLimitForEdit = limitWithFilaments
                                     showAddLimitDialog = true
@@ -237,7 +300,10 @@ fun InventoryLimitsScreen(
                                 onDelete = { limitToDelete = limitWithFilaments.limit },
                                 onDuplicate = {
                                     viewModel.updateLimitWithFilaments(
-                                        limitWithFilaments.limit.copy(id = 0, name = limitWithFilaments.limit.name + " (Copy)"),
+                                        limitWithFilaments.limit.copy(
+                                            id = 0,
+                                            name = limitWithFilaments.limit.name + " (Copy)"
+                                        ),
                                         limitWithFilaments.filaments.map { it.id }
                                     )
                                 },
@@ -273,18 +339,32 @@ fun InventoryLimitsScreen(
                     text = { Text("How should the app handle limits that already exist (matched by name)?") },
                     confirmButton = {
                         TextButton(onClick = {
-                            viewModel.importRobustLimits(pendingLimitImportList, replaceDuplicates = true) { count ->
+                            viewModel.importRobustLimits(
+                                pendingLimitImportList,
+                                replaceDuplicates = true
+                            ) { count ->
                                 viewModel.syncLimitsWithTrackers()
-                                Toast.makeText(context, "Updated/Added $count limits", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(
+                                    context,
+                                    "Updated/Added $count limits",
+                                    Toast.LENGTH_SHORT
+                                ).show()
                             }
                             showImportDialog = false
                         }) { Text("Replace Existing") }
                     },
                     dismissButton = {
                         TextButton(onClick = {
-                            viewModel.importRobustLimits(pendingLimitImportList, replaceDuplicates = false) { count ->
+                            viewModel.importRobustLimits(
+                                pendingLimitImportList,
+                                replaceDuplicates = false
+                            ) { count ->
                                 viewModel.syncLimitsWithTrackers()
-                                Toast.makeText(context, "Added $count new limits", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(
+                                    context,
+                                    "Added $count new limits",
+                                    Toast.LENGTH_SHORT
+                                ).show()
                             }
                             showImportDialog = false
                         }) { Text("Ignore/Skip") }
@@ -367,7 +447,11 @@ fun LimitCard(
         modifier = modifier.fillMaxWidth().clickable { onClick() },
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         shape = RoundedCornerShape(8.dp),
-        colors = if (isActive) CardDefaults.cardColors() else CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+        colors = if (isActive) CardDefaults.cardColors() else CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(
+                alpha = 0.5f
+            )
+        )
     ) {
         Column(modifier = Modifier.padding(8.dp)) {
             Row(
@@ -375,7 +459,8 @@ fun LimitCard(
             ) {
                 IconButton(
                     onClick = { onExpandChange(!isExpanded) },
-                    modifier = Modifier.size(32.dp).padding(end = 4.dp).tourTarget("lim_card_expand", tourTargets)
+                    modifier = Modifier.size(32.dp).padding(end = 4.dp)
+                        .tourTarget("lim_card_expand", tourTargets)
                 ) {
                     Icon(
                         imageVector = if (isExpanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
@@ -386,50 +471,78 @@ fun LimitCard(
 
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        limitWithFilaments.limit.name, 
-                        style = MaterialTheme.typography.titleMedium, 
+                        limitWithFilaments.limit.name,
+                        style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = if (isActive) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        "Min: ${limitWithFilaments.limit.minFilamentsNeeded}; > ${formatMass(limitWithFilaments.limit.minWeightThreshold.toDouble())}",
+                        "Min: ${limitWithFilaments.limit.minFilamentsNeeded}; > ${
+                            formatMass(
+                                limitWithFilaments.limit.minWeightThreshold.toDouble()
+                            )
+                        }",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                
+
                 Row(
                     horizontalArrangement = Arrangement.spacedBy((-12).dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // TOUR: Duplicate Limit (Linked to lim_copy in MainActivity)
-                    IconButton(onClick = onDuplicate, modifier = Modifier.tourTarget("lim_copy", tourTargets)) {
-                        Icon(Icons.Outlined.ContentCopy, contentDescription = "Duplicate", modifier = Modifier.size(20.dp))
+                    IconButton(
+                        onClick = onDuplicate,
+                        modifier = Modifier.tourTarget("lim_copy", tourTargets)
+                    ) {
+                        Icon(
+                            Icons.Outlined.ContentCopy,
+                            contentDescription = "Duplicate",
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
                     // TOUR: Delete Limit (Linked to lim_delete in MainActivity)
-                    IconButton(onClick = onDelete, modifier = Modifier.tourTarget("lim_delete", tourTargets)) {
-                        Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(24.dp))
+                    IconButton(
+                        onClick = onDelete,
+                        modifier = Modifier.tourTarget("lim_delete", tourTargets)
+                    ) {
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = "Delete",
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(24.dp)
+                        )
                     }
                     // TOUR: Toggle Limit (Linked to lim_toggle in MainActivity)
                     Switch(
                         checked = isActive,
                         onCheckedChange = onToggleActive,
-                        modifier = Modifier.scale(0.6f).tourTarget("lim_toggle", tourTargets)
+                        modifier = Modifier.scale(0.6f)
+                            .tourTarget("lim_toggle", tourTargets)
                     )
                 }
             }
-            
+
             if (isExpanded) {
                 Spacer(modifier = Modifier.height(4.dp))
-                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                HorizontalDivider(
+                    thickness = 0.5.dp,
+                    color = MaterialTheme.colorScheme.outlineVariant
+                )
                 Spacer(modifier = Modifier.height(4.dp))
-                
+
                 limitWithFilaments.filaments.forEach { filament ->
-                    TrackedFilamentRow(filament, inventoryViewModel, limitWithFilaments.limit.minWeightThreshold,limitWithFilaments.limit.minFilamentsNeeded)
+                    TrackedFilamentRow(
+                        filament,
+                        inventoryViewModel,
+                        limitWithFilaments.limit.minWeightThreshold,
+                        limitWithFilaments.limit.minFilamentsNeeded
+                    )
                 }
             }
         }
@@ -450,10 +563,10 @@ fun TrackedFilamentRow(
     minFilaments: Int
 ) {
     var expanded by remember { mutableStateOf(false) }
-    
+
     val inventorySpools by inventoryViewModel.getMatchingInventorySpools(
-        vendorFilament.brand ?: "", 
-        vendorFilament.type ?: "", 
+        vendorFilament.brand ?: "",
+        vendorFilament.type ?: "",
         vendorFilament.colorName ?: ""
     ).observeAsState(emptyList())
 
@@ -462,7 +575,7 @@ fun TrackedFilamentRow(
         val weight = weightStr.toDoubleOrNull() ?: 1000.0
         (weight * (spool.usedPercent ?: 1.0f))
     }
-    
+
     val nonEmptySpools = inventorySpools.count { spool ->
         val weightStr = spool.weight?.replace(Regex("[^0-9]"), "") ?: "1000"
         val weight = weightStr.toDoubleOrNull() ?: 1000.0
@@ -473,7 +586,7 @@ fun TrackedFilamentRow(
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(4.dp))
+                .clip(androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
                 .clickable { expanded = !expanded },
             color = if (expanded) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f) else Color.Transparent
         ) {
@@ -482,24 +595,37 @@ fun TrackedFilamentRow(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    val filamentColor = Color(0xFF000000 or (vendorFilament.colorRgb?.toLong() ?: 0L))
-                    Box(modifier = Modifier.size(12.dp).background(filamentColor, CircleShape).border(1.dp, Color.LightGray, CircleShape))
-                    val packageShort = if (vendorFilament.packageType?.contains("Refill", ignoreCase = true) == true) "Ref" else "Spl"
-                    Text(packageShort, fontSize = 7.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    val filamentColor =
+                        Color(0xFF000000 or (vendorFilament.colorRgb?.toLong() ?: 0L))
+                    Box(
+                        modifier = Modifier.size(12.dp)
+                            .background(filamentColor, CircleShape)
+                            .border(1.dp, Color.LightGray, CircleShape)
+                    )
+                    val packageShort = if (vendorFilament.packageType?.contains(
+                            "Refill",
+                            ignoreCase = true
+                        ) == true
+                    ) "Ref" else "Spl"
+                    Text(
+                        packageShort,
+                        fontSize = 7.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        "${vendorFilament.brand} ${vendorFilament.type} ${vendorFilament.colorName ?: ""}", 
-                        style = MaterialTheme.typography.bodySmall, 
+                        "${vendorFilament.brand} ${vendorFilament.type} ${vendorFilament.colorName ?: ""}",
+                        style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.SemiBold,
-                        color = if(nonEmptySpools<minFilaments) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                        color = if (nonEmptySpools < minFilaments) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
                         "Total: ${formatMass(totalWeight)} | Spools: $nonEmptySpools / ${inventorySpools.size}",
                         style = MaterialTheme.typography.labelSmall,
 
-                    )
+                        )
                 }
                 Icon(
                     imageVector = if (expanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
@@ -509,14 +635,18 @@ fun TrackedFilamentRow(
                 )
             }
         }
-        
+
         if (expanded) {
             Column(modifier = Modifier.padding(top = 2.dp)) {
                 if (inventorySpools.isEmpty()) {
                     Text(
-                        "No matching spools", 
-                        style = MaterialTheme.typography.labelSmall, 
-                        modifier = Modifier.padding(start = 28.dp, top = 2.dp, bottom = 4.dp),
+                        "No matching spools",
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.padding(
+                            start = 28.dp,
+                            top = 2.dp,
+                            bottom = 4.dp
+                        ),
                         color = MaterialTheme.colorScheme.error
                     )
                 } else {
@@ -530,7 +660,7 @@ fun TrackedFilamentRow(
 }
 
 /**
- * Detailed view of a single [FilamentInventory] spool within a [TrackedFilamentRow].
+ * Detailed view of a single [com.napps.filamentmanager.database.FilamentInventory] spool within a [TrackedFilamentRow].
  *
  * Displays the spool's ID, calculated current weight, and a progress bar
  * representing remaining filament relative to the limit threshold.
@@ -542,7 +672,14 @@ fun SpoolDetailRow(spool: FilamentInventory, threshold: Float) {
     val currentWeight = totalWeight * (spool.usedPercent ?: 1.0f)
     val progress = if (totalWeight > 0) currentWeight / totalWeight else 0f
 
-    Column(modifier = Modifier.padding(start = 28.dp, top = 4.dp, bottom = 4.dp, end = 8.dp)) {
+    Column(
+        modifier = Modifier.padding(
+            start = 28.dp,
+            top = 4.dp,
+            bottom = 4.dp,
+            end = 8.dp
+        )
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 "Spool #${spool.id} | ${formatMass(currentWeight.toDouble())}",
@@ -550,15 +687,23 @@ fun SpoolDetailRow(spool: FilamentInventory, threshold: Float) {
                 modifier = Modifier.weight(1f)
             )
             if (!spool.trayUID.isNullOrBlank()) {
-                Icon(Icons.Default.Nfc, contentDescription = "NFC Scanned", modifier = Modifier.size(12.dp), tint = MaterialTheme.colorScheme.primary)
+                Icon(
+                    Icons.Default.Nfc,
+                    contentDescription = "NFC Scanned",
+                    modifier = Modifier.size(12.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
             }
         }
         Spacer(modifier = Modifier.height(4.dp))
         Box(modifier = Modifier.fillMaxWidth().height(8.dp)) {
             LinearProgressIndicator(
                 progress = { progress },
-                modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(4.dp)),
-                color = if (currentWeight >= threshold) MaterialTheme.colorScheme.primary else Color(0xFFFF8A80),
+                modifier = Modifier.fillMaxSize()
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(4.dp)),
+                color = if (currentWeight >= threshold) MaterialTheme.colorScheme.primary else Color(
+                    0xFFFF8A80
+                ),
                 trackColor = MaterialTheme.colorScheme.surfaceVariant,
                 strokeCap = StrokeCap.Round
             )
@@ -582,13 +727,23 @@ fun AddEditLimitDialog(
     vendorViewModel: VendorFilamentsViewModel
 ) {
     var name by remember { mutableStateOf(limitWithFilaments?.limit?.name ?: "") }
-    var minFilaments by remember { mutableStateOf(limitWithFilaments?.limit?.minFilamentsNeeded?.toString() ?: "1") }
-    var minWeight by remember { mutableStateOf(limitWithFilaments?.limit?.minWeightThreshold?.toString() ?: "100") }
-    val selectedFilaments = remember { mutableStateListOf<VendorFilament>().apply {
-        limitWithFilaments?.filaments?.let { addAll(it) }
-    }}
+    var minFilaments by remember {
+        mutableStateOf(
+            limitWithFilaments?.limit?.minFilamentsNeeded?.toString() ?: "1"
+        )
+    }
+    var minWeight by remember {
+        mutableStateOf(
+            limitWithFilaments?.limit?.minWeightThreshold?.toString() ?: "100"
+        )
+    }
+    val selectedFilaments = remember {
+        mutableStateListOf<VendorFilament>().apply {
+            limitWithFilaments?.filaments?.let { addAll(it) }
+        }
+    }
     var showFilamentSelection by remember { mutableStateOf(false) }
-    
+
     val allVendorFilaments by vendorViewModel.allVendorFilaments.observeAsState(emptyList())
 
     val view = LocalView.current
@@ -602,7 +757,7 @@ fun AddEditLimitDialog(
                 .fillMaxWidth()
                 .fillMaxHeight(0.9f)
                 .imePadding(),
-            shape = RoundedCornerShape(16.dp)
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)
         ) {
             Column(
                 modifier = Modifier.padding(16.dp).fillMaxSize()
@@ -613,7 +768,9 @@ fun AddEditLimitDialog(
                 )
                 Spacer(modifier = Modifier.height(16.dp))
 
-                Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                Column(
+                    modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())
+                ) {
                     OutlinedTextField(
                         value = name,
                         onValueChange = { name = it },
@@ -621,10 +778,16 @@ fun AddEditLimitDialog(
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(modifier = Modifier.height(12.dp))
-                    
-                    Text("Min. amount of filaments needed:", style = MaterialTheme.typography.labelMedium)
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                        IconButton(onClick = { 
+
+                    Text(
+                        "Min. amount of filaments needed:",
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        IconButton(onClick = {
                             val current = minFilaments.toIntOrNull() ?: 1
                             if (current > 1) minFilaments = (current - 1).toString()
                         }) {
@@ -636,19 +799,25 @@ fun AddEditLimitDialog(
                             modifier = Modifier.weight(1f),
                             textStyle = TextStyle(textAlign = TextAlign.Center)
                         )
-                        IconButton(onClick = { 
+                        IconButton(onClick = {
                             val current = minFilaments.toIntOrNull() ?: 0
                             minFilaments = (current + 1).toString()
                         }) {
                             Icon(Icons.Default.Add, contentDescription = "Increase")
                         }
                     }
-                    
+
                     Spacer(modifier = Modifier.height(12.dp))
-                    
-                    Text("Min filament considered empty [g]:", style = MaterialTheme.typography.labelMedium)
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                        IconButton(onClick = { 
+
+                    Text(
+                        "Min filament considered empty [g]:",
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        IconButton(onClick = {
                             val current = minWeight.toDoubleOrNull() ?: 100.0
                             if (current >= 100.0) minWeight = (current - 100.0).toInt().toString()
                         }) {
@@ -656,11 +825,13 @@ fun AddEditLimitDialog(
                         }
                         OutlinedTextField(
                             value = minWeight,
-                            onValueChange = { if (it.isEmpty() || it.toDoubleOrNull() != null) minWeight = it },
+                            onValueChange = {
+                                if (it.isEmpty() || it.toDoubleOrNull() != null) minWeight = it
+                            },
                             modifier = Modifier.weight(1f),
                             textStyle = TextStyle(textAlign = TextAlign.Center)
                         )
-                        IconButton(onClick = { 
+                        IconButton(onClick = {
                             val current = minWeight.toDoubleOrNull() ?: 0.0
                             minWeight = (current + 100.0).toInt().toString()
                         }) {
@@ -669,7 +840,7 @@ fun AddEditLimitDialog(
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))
-                    
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -680,35 +851,65 @@ fun AddEditLimitDialog(
                             Text("Add")
                         }
                     }
-                    
+
                     selectedFilaments.forEach { filament ->
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                val filamentColor = Color(0xFF000000 or (filament.colorRgb?.toLong() ?: 0L))
-                                Box(modifier = Modifier.size(16.dp).background(filamentColor, CircleShape).border(1.dp, Color.LightGray, CircleShape))
-                                val packageShort = if (filament.packageType?.contains("Refill", ignoreCase = true) == true) "Refill" else "Spool"
-                                Text(packageShort, fontSize = 8.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                val filamentColor =
+                                    Color(0xFF000000 or (filament.colorRgb?.toLong() ?: 0L))
+                                Box(
+                                    modifier = Modifier.size(16.dp)
+                                        .background(filamentColor, CircleShape)
+                                        .border(1.dp, Color.LightGray, CircleShape)
+                                )
+                                val packageShort = if (filament.packageType?.contains(
+                                        "Refill",
+                                        ignoreCase = true
+                                    ) == true
+                                ) "Refill" else "Spool"
+                                Text(
+                                    packageShort,
+                                    fontSize = 8.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                             Spacer(modifier = Modifier.width(8.dp))
-                            
+
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("${filament.brand} ${filament.type}", fontWeight = FontWeight.Bold)
-                                Text(filament.colorName ?: "Unknown Color", style = MaterialTheme.typography.bodySmall)
+                                Text(
+                                    "${filament.brand} ${filament.type}",
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    filament.colorName ?: "Unknown Color",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
                             }
-                            
+
                             // PACKAGE TYPE TOGGLE
-                            val isRefill = filament.packageType?.contains("Refill", ignoreCase = true) == true
+                            val isRefill =
+                                filament.packageType?.contains("Refill", ignoreCase = true) == true
                             val hasBothVariants = remember(filament, allVendorFilaments) {
-                                val variants = allVendorFilaments.filter { 
-                                    it.brand == filament.brand && 
-                                    it.type == filament.type && 
-                                    it.colorName == filament.colorName 
+                                val variants = allVendorFilaments.filter {
+                                    it.brand == filament.brand &&
+                                            it.type == filament.type &&
+                                            it.colorName == filament.colorName
                                 }
-                                val hasRefill = variants.any { it.packageType?.contains("Refill", ignoreCase = true) == true }
-                                val hasSpool = variants.any { it.packageType?.contains("with Spool", ignoreCase = true) == true }
+                                val hasRefill = variants.any {
+                                    it.packageType?.contains(
+                                        "Refill",
+                                        ignoreCase = true
+                                    ) == true
+                                }
+                                val hasSpool = variants.any {
+                                    it.packageType?.contains(
+                                        "with Spool",
+                                        ignoreCase = true
+                                    ) == true
+                                }
                                 hasRefill && hasSpool
                             }
 
@@ -716,10 +917,16 @@ fun AddEditLimitDialog(
                                 onClick = {
                                     val otherVariant = allVendorFilaments.find { vf ->
                                         vf.brand == filament.brand &&
-                                        vf.type == filament.type &&
-                                        vf.colorName == filament.colorName &&
-                                        ((!isRefill && vf.packageType?.contains("Refill", ignoreCase = true) == true) ||
-                                         (isRefill && vf.packageType?.contains("with Spool", ignoreCase = true) == true))
+                                                vf.type == filament.type &&
+                                                vf.colorName == filament.colorName &&
+                                                ((!isRefill && vf.packageType?.contains(
+                                                    "Refill",
+                                                    ignoreCase = true
+                                                ) == true) ||
+                                                        (isRefill && vf.packageType?.contains(
+                                                            "with Spool",
+                                                            ignoreCase = true
+                                                        ) == true))
                                     }
                                     if (otherVariant != null) {
                                         val index = selectedFilaments.indexOf(filament)
@@ -734,8 +941,12 @@ fun AddEditLimitDialog(
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = if (isRefill) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.secondaryContainer,
                                     contentColor = if (isRefill) MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onSecondaryContainer,
-                                    disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                    disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(
+                                        alpha = 0.5f
+                                    ),
+                                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                                        alpha = 0.5f
+                                    )
                                 )
                             ) {
                                 Text(if (isRefill) "Refill" else "Spool", fontSize = 12.sp)
@@ -755,11 +966,12 @@ fun AddEditLimitDialog(
                     TextButton(onClick = onDismiss) { Text("Cancel") }
                     Button(
                         onClick = {
-                            val limit = (limitWithFilaments?.limit ?: InventoryLimit(name = name)).copy(
-                                name = name,
-                                minFilamentsNeeded = minFilaments.toIntOrNull() ?: 1,
-                                minWeightThreshold = minWeight.toFloatOrNull() ?: 100f
-                            )
+                            val limit =
+                                (limitWithFilaments?.limit ?: InventoryLimit(name = name)).copy(
+                                    name = name,
+                                    minFilamentsNeeded = minFilaments.toIntOrNull() ?: 1,
+                                    minWeightThreshold = minWeight.toFloatOrNull() ?: 100f
+                                )
                             onSave(limit, selectedFilaments.map { it.id })
                         },
                         enabled = name.isNotBlank() && selectedFilaments.isNotEmpty()
@@ -778,11 +990,11 @@ fun AddEditLimitDialog(
                         // Default to Refill when adding
                         val refillVariant = allVendorFilaments.find { vf ->
                             vf.brand == f.brand &&
-                            vf.type == f.type &&
-                            vf.colorName == f.colorName &&
-                            vf.packageType?.contains("Refill", ignoreCase = true) == true
+                                    vf.type == f.type &&
+                                    vf.colorName == f.colorName &&
+                                    vf.packageType?.contains("Refill", ignoreCase = true) == true
                         } ?: f
-                        
+
                         if (selectedFilaments.none { it.brand == refillVariant.brand && it.type == refillVariant.type && it.colorName == refillVariant.colorName }) {
                             selectedFilaments.add(refillVariant)
                         }
@@ -827,12 +1039,12 @@ fun LimitFilamentSelectionDialog(
                 .fillMaxWidth()
                 .fillMaxHeight(0.85f)
                 .imePadding(),
-            shape = RoundedCornerShape(16.dp)
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)
         ) {
             @Suppress("DEPRECATION")
-            Column(modifier = Modifier.padding(16.dp).fillMaxSize()) {
+            (Column(modifier = Modifier.padding(16.dp).fillMaxSize()) {
                 Text("Select Filaments", style = MaterialTheme.typography.titleLarge)
-                
+
                 SecondaryTabRow(selectedTabIndex = selectedTabIndex) {
                     tabs.forEachIndexed { index, title ->
                         Tab(
@@ -856,8 +1068,13 @@ fun LimitFilamentSelectionDialog(
 
                 Box(modifier = Modifier.weight(1f).padding(vertical = 8.dp)) {
                     if (selectedTabIndex == 0) {
-                        InventoryFilamentList(searchQuery, inventoryViewModel, vendorViewModel) { filament ->
-                            val alreadySelected = selectedFilaments.find { it.brand == filament.brand && it.type == filament.type && it.colorName == filament.colorName }
+                        InventoryFilamentList(
+                            searchQuery,
+                            inventoryViewModel,
+                            vendorViewModel
+                        ) { filament ->
+                            val alreadySelected =
+                                selectedFilaments.find { it.brand == filament.brand && it.type == filament.type && it.colorName == filament.colorName }
                             if (alreadySelected != null) {
                                 selectedFilaments.remove(alreadySelected)
                             } else {
@@ -866,7 +1083,8 @@ fun LimitFilamentSelectionDialog(
                         }
                     } else {
                         AllVendorFilamentList(searchQuery, vendorViewModel) { filament ->
-                            val alreadySelected = selectedFilaments.find { it.brand == filament.brand && it.type == filament.type && it.colorName == filament.colorName }
+                            val alreadySelected =
+                                selectedFilaments.find { it.brand == filament.brand && it.type == filament.type && it.colorName == filament.colorName }
                             if (alreadySelected != null) {
                                 selectedFilaments.remove(alreadySelected)
                             } else {
@@ -888,7 +1106,7 @@ fun LimitFilamentSelectionDialog(
                         Text("Add")
                     }
                 }
-            }
+            })
         }
     }
 }
@@ -921,11 +1139,13 @@ fun InventoryFilamentList(
         allInventory.forEach { inv ->
             allVendorFilaments.find { vf ->
                 (vf.brand?.trim()?.equals(inv.brand.trim(), ignoreCase = true) == true) &&
-                (vf.type?.trim()?.equals(inv.type?.trim(), ignoreCase = true) == true) &&
-                (vf.colorName?.trim()?.equals(inv.colorName?.trim(), ignoreCase = true) == true)
+                        (vf.type?.trim()?.equals(inv.type?.trim(), ignoreCase = true) == true) &&
+                        (vf.colorName?.trim()
+                            ?.equals(inv.colorName?.trim(), ignoreCase = true) == true)
             }?.let { found ->
-                if (matchesSearch(found, searchQuery) && 
-                    list.none { it.brand == found.brand && it.type == found.type && it.colorName == found.colorName }) {
+                if (matchesSearch(found, searchQuery) &&
+                    list.none { it.brand == found.brand && it.type == found.type && it.colorName == found.colorName }
+                ) {
                     list.add(found)
                 }
             }
@@ -943,20 +1163,37 @@ fun InventoryFilamentList(
                         isSelected = !isSelected
                         onToggle(filament)
                     }
-                    .background(if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f) else Color.Transparent)
+                    .background(
+                        if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(
+                            alpha = 0.3f
+                        ) else Color.Transparent
+                    )
                     .padding(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 val filamentColor = Color(0xFF000000 or (filament.colorRgb?.toLong() ?: 0L))
-                Box(modifier = Modifier.size(16.dp).background(filamentColor, CircleShape).border(1.dp, Color.LightGray, CircleShape))
+                Box(
+                    modifier = Modifier.size(16.dp).background(filamentColor, CircleShape)
+                        .border(1.dp, Color.LightGray, CircleShape)
+                )
                 Spacer(modifier = Modifier.width(12.dp))
-                
+
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("${filament.brand} ${filament.type}", fontWeight = FontWeight.Bold)
-                    Text(filament.colorName ?: "No Color", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "${filament.brand} ${filament.type}",
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        filament.colorName ?: "No Color",
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
                 if (isSelected) {
-                    Icon(Icons.Default.Check, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary)
+                    Icon(
+                        Icons.Default.Check,
+                        contentDescription = "Selected",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
                 }
             }
         }
@@ -987,20 +1224,37 @@ fun AllVendorFilamentList(
                         isSelected = !isSelected
                         onToggle(filament)
                     }
-                    .background(if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f) else Color.Transparent)
+                    .background(
+                        if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(
+                            alpha = 0.3f
+                        ) else Color.Transparent
+                    )
                     .padding(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 val filamentColor = Color(0xFF000000 or (filament.colorRgb?.toLong() ?: 0L))
-                Box(modifier = Modifier.size(16.dp).background(filamentColor, CircleShape).border(1.dp, Color.LightGray, CircleShape))
+                Box(
+                    modifier = Modifier.size(16.dp).background(filamentColor, CircleShape)
+                        .border(1.dp, Color.LightGray, CircleShape)
+                )
                 Spacer(modifier = Modifier.width(12.dp))
-                
+
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("${filament.brand} ${filament.type}", fontWeight = FontWeight.Bold)
-                    Text(filament.colorName ?: "No Color", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "${filament.brand} ${filament.type}",
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        filament.colorName ?: "No Color",
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
                 if (isSelected) {
-                    Icon(Icons.Default.Check, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary)
+                    Icon(
+                        Icons.Default.Check,
+                        contentDescription = "Selected",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
                 }
             }
         }

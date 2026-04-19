@@ -14,8 +14,8 @@ android {
         applicationId = "com.napps.filamentmanager"
         minSdk = 31
         targetSdk = 36
-        versionCode = 12
-        versionName = "1.0"
+        versionCode = 16
+        versionName = "1.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -27,11 +27,7 @@ android {
             isMinifyEnabled = false
         }
         release {
-            isMinifyEnabled = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
+            isMinifyEnabled = false
         }
     }
     compileOptions {
@@ -81,6 +77,7 @@ dependencies {
     implementation(libs.androidx.compose.ui.text)
     implementation(libs.androidx.compose.ui.geometry)
     implementation(libs.androidx.biometric)
+    implementation(libs.material3)
 
     ksp(libs.androidx.room.compiler)
     implementation(libs.androidx.core.ktx)

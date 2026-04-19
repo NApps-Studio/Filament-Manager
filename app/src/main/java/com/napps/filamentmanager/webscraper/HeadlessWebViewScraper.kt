@@ -13,6 +13,17 @@ import kotlinx.coroutines.*
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 import kotlin.time.Duration.Companion.milliseconds
+import com.napps.filamentmanager.database.SyncReport
+
+data class SyncResult(
+    val filaments: List<VendorFilament>,
+    val summary: String,
+    val details: String,
+    val affectedVariants: Int,
+    val errorCount: Int,
+    val isError: Boolean,
+    val syncType: String = "Full Sync"
+)
 
 /**
  * A headless synchronization engine that uses an Android [WebView] to navigate and parse
@@ -45,13 +56,14 @@ class HeadlessWebViewSync(private val context: Context) {
     suspend fun sync(
         links: List<ProductLink>, 
         vendor: StartPagesOfVendors,
+        syncType: String = "Full Sync",
         onProgress: (Int, Int, Int, Int) -> Unit = { _, _, _, _ -> }
-    ): List<VendorFilament> = withContext(Dispatchers.Main) {
+    ): SyncResult = withContext(Dispatchers.Main) {
         val finalFilaments = mutableListOf<VendorFilament>()
-        val colorCache = mutableMapOf<String, Int>()
+        val errors = mutableListOf<String>()
         val totalPages = links.size
         var filamentsSuccess = 0
-        var filamentsFailed = 0
+        var pageFailures = 0
 
         val wv = WebView(context).apply {
             settings.javaScriptEnabled = true
@@ -63,100 +75,83 @@ class HeadlessWebViewSync(private val context: Context) {
         webView = wv
 
         try {
-            // Step 2: Sync each product page
             for ((index, productLink) in links.withIndex()) {
                 val pagesDone = index + 1
                 val link = productLink.url
-                Log.d("BAMBU", "Processing page $pagesDone/$totalPages: $link")
                 
                 val htmlRaw = loadPageAndGetHtml(wv, link)
                 val html = unescapeHtml(htmlRaw ?: "")
 
                 if (html.isEmpty()) {
-                    Log.e("BAMBU", "HTML is empty for $link")
-                    filamentsFailed += productLink.expectedCount
-                    onProgress(pagesDone, totalPages, filamentsSuccess, filamentsFailed)
+                    pageFailures++
+                    errors.add("Failed to load page: $link")
+                    onProgress(pagesDone, totalPages, filamentsSuccess, pageFailures)
                     continue
                 }
 
-                val english = isEnglish(html)
-                Log.d("BAMBU", "Page language is English: $english")
-
                 if (isCloudflareChallenge(html)) {
-                    Log.e("BAMBU", "Cloudflare detected on $link")
                     throw CloudflareChallengeException("Cloudflare challenge detected")
                 }
 
-                // Per-page language check
-                if (!english) {
-                    Log.w("BAMBU", "Skipping page (not English): $link")
-                    filamentsFailed += productLink.expectedCount
-                    onProgress(pagesDone, totalPages, filamentsSuccess, filamentsFailed)
+                if (!isEnglish(html)) {
+                    pageFailures++
+                    errors.add("Language mismatch (not English) on: $link")
+                    onProgress(pagesDone, totalPages, filamentsSuccess, pageFailures)
                     continue
                 }
 
-                var attempt = 0
                 var syncedFilaments: List<VendorFilament>? = emptyList()
-
-                while (attempt < 7 && syncedFilaments.isNullOrEmpty()) {
+                for (attempt in 1..7) {
                     delay(750.milliseconds)
-                    
-                    // Optimization: Instead of fetching the whole HTML, try to get the JSON-LD directly first
                     val jsonLdRaw = wv.evaluateJavascriptSync("document.getElementById('product-jsonld')?.innerHTML")
                     val jsonLd = unescapeHtml(jsonLdRaw ?: "").trim().removeSurrounding("\"")
                     
                     if (jsonLd.isNotEmpty() && jsonLd != "null") {
-                        Log.d("BAMBU", "Found JSON-LD directly via JS (${jsonLd.length} chars)")
                         syncedFilaments = parseBambulabProductPage(jsonLd, isJsonOnly = true)
                     }
 
-                    // Fallback to full HTML if direct JS failed or we need it for thumbnails
                     if (syncedFilaments.isNullOrEmpty()) {
                         val currentRawHtml = wv.evaluateJavascriptSync("(function() { return document.documentElement.outerHTML; })();")
                         val currentHtml = unescapeHtml(currentRawHtml ?: "")
                         syncedFilaments = parseBambulabProductPage(currentHtml)
                     }
 
-                    attempt++
-                    
                     if (!syncedFilaments.isNullOrEmpty()) {
-                        // We still need the full HTML for thumbnails as they aren't in the JSON-LD
-                        val currentRawHtml = wv.evaluateJavascriptSync("(function() { return document.documentElement.outerHTML; })();")
-                        val currentHtml = unescapeHtml(currentRawHtml ?: "")
-                        val colorMap = parseColorThumbnails(currentHtml)
-                        
-                        val updatedFilaments = syncedFilaments.map { filament ->
-                            val thumbUrl = colorMap[filament.colorName]
-                            if (thumbUrl != null) {
-                                val cachedColor = colorCache[thumbUrl]
-                                val colorInt = cachedColor ?: getPixelFromUrl(context, thumbUrl)
-                                if (cachedColor == null) colorCache[thumbUrl] = colorInt
-                                filament.copy(colorRgb = colorInt)
-                            } else {
-                                filament
-                            }
-                        }
-                        Log.d("BAMBU", "Successfully parsed ${updatedFilaments.size} variants from $link")
-                        finalFilaments.addAll(updatedFilaments)
-                        filamentsSuccess += updatedFilaments.size
+                        finalFilaments.addAll(syncedFilaments)
+                        filamentsSuccess += syncedFilaments.size
                         break
-                    }
-                    
-                    if (attempt == 7) {
-                        Log.e("BAMBU", "Failed to parse $link. JSON-LD found: ${jsonLd.take(100)}...")
                     }
                 }
                 
                 if (syncedFilaments.isNullOrEmpty()) {
-                    filamentsFailed += productLink.expectedCount
+                    pageFailures++
+                    errors.add("Failed to parse variants from: $link")
                 }
-                onProgress(pagesDone, totalPages, filamentsSuccess, filamentsFailed)
+                onProgress(pagesDone, totalPages, filamentsSuccess, pageFailures)
             }
+        } catch (e: CloudflareChallengeException) {
+            errors.add("Sync blocked by Cloudflare")
         } finally {
             wv.destroy()
             webView = null
         }
-        finalFilaments
+
+        val isError = errors.isNotEmpty()
+        val summary = if (isError) {
+            "Sync completed with ${errors.size} issues"
+        } else {
+            "Successfully synced $filamentsSuccess variants"
+        }
+        
+        SyncResult(
+            filaments = finalFilaments,
+            summary = summary,
+            details = errors.joinToString("\n"),
+            affectedVariants = filamentsSuccess,
+            errorCount = errors.size,
+            isError = isError,
+            syncType = syncType
+        )
     }
 
     /**

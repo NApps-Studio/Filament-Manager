@@ -28,10 +28,13 @@
 -keep class io.reactivex.** { *; }
 -keep class dagger.internal.DoubleCheck { *; }
 
-# Data Models (Gson/Room) - Fix for Deserialization failed
-# We keep all fields in your database package to ensure JSON mapping works
+# Data Models (Gson/Room/MQTT) - Fix for Deserialization failed
+# We keep all fields in these packages to ensure JSON mapping works
 -keep class com.napps.filamentmanager.database.** { *; }
 -keepclassmembers class com.napps.filamentmanager.database.** { *; }
+-keep class com.napps.filamentmanager.mqtt.** { *; }
+-keepclassmembers class com.napps.filamentmanager.mqtt.** { *; }
+-keep class com.google.gson.** { *; }
 
 # Suppress warnings for libraries that reference missing classes on Android
 -dontwarn com.google.re2j.Matcher
@@ -61,4 +64,4 @@
 -dontobfuscate
 
 # DO NOT remove unused code (optional, but safer if you want no minification at all)
-#-dontshrink
+-dontshrink

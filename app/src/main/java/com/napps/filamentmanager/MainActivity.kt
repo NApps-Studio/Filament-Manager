@@ -75,6 +75,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.Executor
 import androidx.compose.ui.unit.dp
+import com.napps.filamentmanager.ui.InventoryLimitsScreen
 
 /**
  * Main entry point for the Bambu Filament Manager application.
@@ -111,6 +112,8 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
     private val viewModelLimits: InventoryLimitViewModel by viewModels {
         InventoryLimitViewModelFactory((application as FilamentManagerApplication).inventoryLimitRepository)
     }
+
+    private val viewModelSyncReports: SyncReportViewModel by viewModels()
 
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -355,7 +358,15 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                     }
                 }
 
-                FilamentManagerApp(viewModelAvailability, viewModelInventory, viewModelBambu, viewModelLimits, userPrefs, intentState.value)
+                FilamentManagerApp(
+                    viewModelVendor = viewModelAvailability,
+                    viewModelInventory = viewModelInventory,
+                    viewModelBambu = viewModelBambu,
+                    viewModelLimits = viewModelLimits,
+                    viewModelSyncReports = viewModelSyncReports,
+                    userPrefs = userPrefs,
+                    intent = intentState.value
+                )
             }
         }
     }
@@ -496,6 +507,7 @@ fun FilamentManagerApp(
     viewModelInventory: FilamentInventoryViewModel,
     viewModelBambu: BambuViewModel,
     viewModelLimits: InventoryLimitViewModel,
+    viewModelSyncReports: SyncReportViewModel,
     userPrefs: UserPreferencesRepository,
     intent: Intent?
 ) {
@@ -525,6 +537,7 @@ fun FilamentManagerApp(
     val limitsLazyListState = rememberLazyListState()
     val bambuLazyListState = rememberLazyListState()
     val settingsScrollState = rememberScrollState()
+    val snycReportsScrollState = rememberScrollState()
 
     val inventoryExpandedGroups = remember { mutableStateMapOf<String, Boolean>() }
     val availabilityExpandedTrackers = remember { mutableStateMapOf<Int, Boolean>() }
@@ -686,6 +699,11 @@ fun FilamentManagerApp(
             var currentTourStep by remember { mutableIntStateOf(0) }
             val scope = rememberCoroutineScope()
             
+            // TOUR: Sync Reports Guide (Linked to sync_reports in Sync reports screen)
+            val syncReportsSteps = listOf(
+                TourStep("", "Sync Reports provide a detailed log of sync. If a sync fails, check here to see which specific filaments were affected.")
+            )
+
             // TOUR: Main App Tour (Targets set in NavigationSuite and NAppsScreen)
             val nappsSteps = listOf(
                 TourStep("settings", "Configure app behavior, update intervals, and more here."),
@@ -748,7 +766,7 @@ fun FilamentManagerApp(
             val availabilityStepsPage = listOf(
                 TourStep("avail_status", "The status of the Availability tracker (when it last ran and its current status)"),
                 TourStep("avail_eye", "Hides or shows trackers created automatically from your inventory limits."),
-                TourStep("avail_more", "Import/Export trackers, set your store region, or trigger a manual update/full sync."),
+                TourStep("avail_more", "Import/Export trackers, set your store region,trigger a manual update/full sync or  see the sync reports."),
                 TourStep("avail_fab", "Create your own custom trackers by selecting filaments from the catalog.")
             )
 
@@ -860,6 +878,7 @@ fun FilamentManagerApp(
                                     viewModel = viewModelVendor,
                                     inventoryViewModel = viewModelInventory,
                                     bambuViewModel = viewModelBambu,
+                                    syncReportViewModel = viewModelSyncReports,
                                     userPrefs = userPrefs,
                                     tourTargets = tourTargets,
                                     isTourActive = tourFlags["AVAILABILITY"] ?: false,
@@ -906,8 +925,26 @@ fun FilamentManagerApp(
                 if (effectiveDestination == AppDestinations.AVAILABILITY) {
                     val isPageTourActive = (tourFlags["AVAILABILITY"] ?: false)
                     val isCardTourActive = (tourFlags["AVAILABILITY_CARD"] ?: false) && availabilityStepsCard.isNotEmpty()
+                    val isSyncReportsTourActive = (tourFlags["SYNC_REPORTS"] ?: false)
+                    val isShowingSyncReports by viewModelSyncReports.isShowingReports.collectAsStateWithLifecycle()
 
-                    if (isPageTourActive) {
+                    if (isSyncReportsTourActive && isShowingSyncReports) {
+                        TourOverlay(
+                            steps = syncReportsSteps,
+                            currentStepIndex = currentTourStep,
+                            targets = tourTargets,
+                            onNext = {
+                                if (currentTourStep < syncReportsSteps.size - 1) {
+                                    currentTourStep++
+                                } else {
+                                    scope.launch { 
+                                        userPrefs.updateTourFlag("SYNC_REPORTS", false)
+                                        currentTourStep = 0
+                                    }
+                                }
+                            }
+                        )
+                    } else if (isPageTourActive) {
                         TourOverlay(
                             steps = availabilityStepsPage,
                             currentStepIndex = currentTourStep,

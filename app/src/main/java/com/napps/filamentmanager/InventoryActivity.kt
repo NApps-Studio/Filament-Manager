@@ -54,6 +54,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Nfc
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Warning
@@ -663,7 +664,8 @@ fun InventoryScreen(
                                     onClick = {
                                         showMenuMoreVert = false
                                         viewModel.navigateToLimits()
-                                    }
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.Tune, contentDescription = null) }
                                 )
                             }
                         )

@@ -21,6 +21,8 @@ import kotlinx.coroutines.withContext
 
 import com.napps.filamentmanager.database.VendorFilamentsDao
 import com.napps.filamentmanager.database.TrackerFilamentCrossRef
+import com.napps.filamentmanager.database.SyncReport
+import com.google.gson.Gson
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.delay
 
@@ -115,11 +117,22 @@ class FullSyncWorker(
             
             val productLinks = parseBambulabStartPage(startPageHtml, startLink, StartPagesOfVendors.BAMBU_LAB.testHtmlClass)
             if (productLinks == null || productLinks.isEmpty()) {
+                val report = SyncReport(
+                    syncType = "Full Sync",
+                    summary = "Start page parse failure",
+                    details = "Could not parse product links from: $startLink",
+                    affectedVariants = 0,
+                    errorCount = 1,
+                    isError = true
+                )
+                withContext(Dispatchers.IO) {
+                    AppDatabase.getDatabase(appContext).syncReportDao().insert(report)
+                }
                 throw Exception("Could not parse start page links.")
             }
 
             // Step 2: Sync each product page
-            val syncList = syncEngine.sync(productLinks, StartPagesOfVendors.BAMBU_LAB) { pagesDone, totalPages, success, failed ->
+            val syncResult = syncEngine.sync(productLinks, StartPagesOfVendors.BAMBU_LAB, "Full Sync") { pagesDone, totalPages, success, failed ->
                 val progressText = "Full sync: $pagesDone/$totalPages | Success: $success | Failed: $failed"
                 NotificationGroupManager.updateStatus(appContext, "FullSyncWorker", progressText, "sync_channel_Status")
                 
@@ -131,8 +144,22 @@ class FullSyncWorker(
                 }
             }
             
+            val syncList = syncResult.filaments
+            
             withContext(Dispatchers.IO) {
                 syncList.forEach { dao.insertOrUpdate(it) }
+                
+                val report = SyncReport(
+                    syncType = "Full Sync",
+                    summary = syncResult.summary,
+                    details = syncResult.details,
+                    affectedVariants = syncResult.affectedVariants,
+                    errorCount = syncResult.errorCount,
+                    isError = syncResult.isError,
+                    syncedContent = Gson().toJson(syncList)
+                )
+                AppDatabase.getDatabase(appContext).syncReportDao().insert(report)
+
                 userPrefs.setFirstSyncFinished(true)
                 
                 val trackers = dao.getAllTrackersWithNotificationsStatic()
@@ -176,6 +203,18 @@ class FullSyncWorker(
             is HeadlessWebViewSync.LanguageMismatchException -> e.message ?: "The store page is not in English."
             is kotlinx.coroutines.TimeoutCancellationException -> "Sync timed out. Your connection might be too slow."
             else -> "The sync encountered an error. Tap to try again."
+        }
+        
+        withContext(Dispatchers.IO) {
+            val report = SyncReport(
+                syncType = "Full Sync",
+                summary = "Critical sync failure",
+                details = "Error: ${e.message}",
+                affectedVariants = 0,
+                errorCount = 1,
+                isError = true
+            )
+            AppDatabase.getDatabase(appContext).syncReportDao().insert(report)
         }
 
         postFailureNotification(appContext, "Full Sync Failed", userFriendlyMessage)

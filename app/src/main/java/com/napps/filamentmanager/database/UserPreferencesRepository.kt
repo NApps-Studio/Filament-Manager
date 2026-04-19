@@ -43,6 +43,7 @@ class UserPreferencesRepository(private val context: Context) {
         val TOUR_LIMITS_CARD = booleanPreferencesKey("tour_limits_card")
         val TOUR_LOW_STOCK = booleanPreferencesKey("tour_low_stock")
         val TOUR_UNMAPPED = booleanPreferencesKey("tour_unmapped")
+        val TOUR_SYNC_REPORTS = booleanPreferencesKey("tour_sync_reports")
         val HAS_SHOWN_TOUR_DECISION = booleanPreferencesKey("has_shown_tour_decision")
         val HAS_ADDED_FILAMENT = booleanPreferencesKey("has_added_filament")
         val HAS_ADDED_PRINTER = booleanPreferencesKey("has_added_printer")
@@ -199,6 +200,7 @@ class UserPreferencesRepository(private val context: Context) {
                 "LIMITS_CARD" to (prefs[PreferencesKeys.TOUR_LIMITS_CARD] ?: false),
                 "LOW_STOCK" to (prefs[PreferencesKeys.TOUR_LOW_STOCK] ?: false),
                 "UNMAPPED" to (prefs[PreferencesKeys.TOUR_UNMAPPED] ?: false),
+                "SYNC_REPORTS" to (prefs[PreferencesKeys.TOUR_SYNC_REPORTS] ?: false),
                 "BAMBU_ACCOUNT_AFTER_LOGIN" to (prefs[PreferencesKeys.TOUR_BAMBU_ACCOUNT_AFTER_LOGIN] ?: false),
                 "BAMBU_ACCOUNT_TOKEN_EXPIRED" to (prefs[PreferencesKeys.TOUR_BAMBU_ACCOUNT_TOKEN_EXPIRED] ?: false)
             )
@@ -224,6 +226,7 @@ class UserPreferencesRepository(private val context: Context) {
                 "LIMITS_CARD" -> prefs[PreferencesKeys.TOUR_LIMITS_CARD] = enabled
                 "LOW_STOCK" -> prefs[PreferencesKeys.TOUR_LOW_STOCK] = enabled
                 "UNMAPPED" -> prefs[PreferencesKeys.TOUR_UNMAPPED] = enabled
+                "SYNC_REPORTS" -> prefs[PreferencesKeys.TOUR_SYNC_REPORTS] = enabled
                 "BAMBU_ACCOUNT_AFTER_LOGIN" -> prefs[PreferencesKeys.TOUR_BAMBU_ACCOUNT_AFTER_LOGIN] = enabled
                 "BAMBU_ACCOUNT_TOKEN_EXPIRED" -> prefs[PreferencesKeys.TOUR_BAMBU_ACCOUNT_TOKEN_EXPIRED] = enabled
             }
@@ -235,6 +238,8 @@ class UserPreferencesRepository(private val context: Context) {
      */
     suspend fun setAllToursEnabled(enabled: Boolean) {
         context.dataStore.edit { prefs ->
+            prefs[PreferencesKeys.LOW_FILAMENT_THRESHOLD_G] = 25
+            prefs[PreferencesKeys.TOUR_SYNC_REPORTS] = enabled
             prefs[PreferencesKeys.TOUR_NAPPS_SCREEN] = enabled
             prefs[PreferencesKeys.TOUR_AVAILABILITY] = enabled
             prefs[PreferencesKeys.TOUR_INVENTORY] = enabled
