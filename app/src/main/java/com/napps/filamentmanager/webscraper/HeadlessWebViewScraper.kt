@@ -5,9 +5,12 @@ import android.util.Log
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import com.napps.filamentmanager.database.VendorFilament
-import kotlinx.coroutines.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
-import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * HeadlessWebViewSync uses a hidden WebView to scrape product data from vendor websites.
@@ -84,14 +87,14 @@ class HeadlessWebViewSync(private val context: Context) {
         val allColorThumbnails = mutableMapOf<String, String>()
 
         try {
-            android.util.Log.d("BambuSync", "Initial load (${if(availabilityOnly) "Avail-Only" else "Full"}): $forcedEnglishUrl")
+            Log.d("BambuSync", "Initial load (${if(availabilityOnly) "Avail-Only" else "Full"}): $forcedEnglishUrl")
             val initialHtml = withTimeoutOrNull(45000) { wv.loadUrlAndWait(forcedEnglishUrl) }
                 ?: return@withContext SyncResult(emptyList(), "Timeout", "Page load timed out", 0, 1, true)
 
             var currentHtml = initialHtml
             // Fallback: If still not English after forcing URL param, try one more time.
             if (!isEnglish(currentHtml)) {
-                android.util.Log.w("BambuSync", "Page not in English after forcing param. Retrying...")
+                Log.w("BambuSync", "Page not in English after forcing param. Retrying...")
                 wv.loadUrl(forcedEnglishUrl)
                 delay(2000)
                 currentHtml = unescapeHtml(wv.evaluateJavascriptSync("document.documentElement.outerHTML") ?: "")
@@ -122,7 +125,7 @@ class HeadlessWebViewSync(private val context: Context) {
                     .trim()
             }
             
-            android.util.Log.d("BambuSync", "Detected ${typeGroups.size} groups: ${typeGroups.keys.joinToString(", ")}")
+            Log.d("BambuSync", "Detected ${typeGroups.size} groups: ${typeGroups.keys.joinToString(", ")}")
 
             // 3. Determine how to gather swatches
             if (typeGroups.size > 1) {
@@ -141,7 +144,7 @@ class HeadlessWebViewSync(private val context: Context) {
                         }
                     }
                     val groupUrlWithEn = fullUrl + (if (fullUrl.contains("?")) "&ls=en" else "?ls=en")
-                    android.util.Log.d("BambuSync", "Loading material group page ($groupName): $groupUrlWithEn")
+                    Log.d("BambuSync", "Loading material group page ($groupName): $groupUrlWithEn")
                     val groupHtml = withTimeoutOrNull(30000) { wv.loadUrlAndWait(groupUrlWithEn) }
                     if (groupHtml != null) {
                         allColorThumbnails.putAll(parseColorThumbnails(groupHtml))

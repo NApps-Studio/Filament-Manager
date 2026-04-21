@@ -6,22 +6,30 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import androidx.core.app.NotificationCompat
-import androidx.work.*
+import androidx.work.Constraints
+import androidx.work.CoroutineWorker
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
+import androidx.work.ForegroundInfo
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.WorkerParameters
+import com.google.gson.Gson
 import com.napps.filamentmanager.MainActivity
 import com.napps.filamentmanager.R
 import com.napps.filamentmanager.database.AppDatabase
 import com.napps.filamentmanager.database.AvailabilityMenuText
+import com.napps.filamentmanager.database.SyncReport
 import com.napps.filamentmanager.database.UserPreferencesRepository
 import com.napps.filamentmanager.database.VendorFilament
-import com.napps.filamentmanager.database.SyncReport
-import com.google.gson.Gson
 import com.napps.filamentmanager.util.NotificationGroupManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.text.SimpleDateFormat
-import java.util.*
 import java.util.concurrent.TimeUnit
 
 /**
@@ -69,7 +77,7 @@ class SyncWorker(
         val database = AppDatabase.getDatabase(appContext)
         val dao = database.vendorFilamentsDao()
         val reportDao = database.syncReportDao()
-        val userPrefs = UserPreferencesRepository(appContext)
+        UserPreferencesRepository(appContext)
         
         val startTime = System.currentTimeMillis()
         var reportId: Long = -1

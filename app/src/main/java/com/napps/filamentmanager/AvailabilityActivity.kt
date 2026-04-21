@@ -1,8 +1,5 @@
 package com.napps.filamentmanager
 
-import android.app.ActivityManager
-import android.content.Context
-import android.content.Intent
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -12,23 +9,84 @@ import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.displayCutoutPadding
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.outlined.ShoppingCart
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.ArrowDropUp
+import androidx.compose.material.icons.filled.CloudSync
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.NotificationsNone
+import androidx.compose.material.icons.filled.PriorityHigh
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.outlined.ContentCopy
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.outlined.ShoppingCart
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.FloatingActionButtonDefaults
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconToggleButton
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.livedata.observeAsState
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shadow
@@ -44,29 +102,33 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemKey
-import com.napps.filamentmanager.database.*
-import com.napps.filamentmanager.util.DynamicCsvHelper
-import com.napps.filamentmanager.util.SecuritySession
-import com.napps.filamentmanager.util.tourTarget
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.runtime.snapshots.SnapshotStateMap
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.napps.filamentmanager.database.AvailabilityMenuText
+import com.napps.filamentmanager.database.AvailabilityTracker
+import com.napps.filamentmanager.database.BambuViewModel
+import com.napps.filamentmanager.database.ColorInfo
+import com.napps.filamentmanager.database.FilamentInventoryViewModel
+import com.napps.filamentmanager.database.SyncRegion
+import com.napps.filamentmanager.database.SyncReportViewModel
+import com.napps.filamentmanager.database.TrackerWithFilaments
+import com.napps.filamentmanager.database.UserPreferencesRepository
+import com.napps.filamentmanager.database.VendorFilament
+import com.napps.filamentmanager.database.VendorFilamentsViewModel
 import com.napps.filamentmanager.ui.SyncRequiredDialog
-import com.napps.filamentmanager.ui.SyncWarningDialog
 import com.napps.filamentmanager.ui.WarningIconOverlay
-import com.napps.filamentmanager.ui.SyncReportsScreen
+import com.napps.filamentmanager.util.DynamicCsvHelper
+import com.napps.filamentmanager.util.tourTarget
 import com.napps.filamentmanager.webscraper.FullSyncWorker
 import com.napps.filamentmanager.webscraper.SyncWorker
-import com.napps.filamentmanager.webscraper.StartPagesOfVendors
 import com.napps.filamentmanager.webscraper.WebCartDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Date
+import java.util.Locale
 
 /**
  * Screen for tracking filament availability across different vendors (primarily Bambu Lab).
@@ -96,16 +158,10 @@ fun AvailabilityScreen(
     val hasFirstSyncFinished by viewModel.hasFirstSyncFinished.collectAsStateWithLifecycle(initialValue = true)
 
     var showMenu by remember { mutableStateOf(false) }
-    val authData by bambuViewModel.authData.collectAsState()
 
     val trackerList by viewModel.allTrackersWithFilaments.observeAsState(emptyList())
     var selectedTrackerForEdit by remember { mutableStateOf<TrackerWithFilaments?>(null) }
     var trackerToDelete by remember { mutableStateOf<AvailabilityTracker?>(null) }
-
-    val ignoreSyncWarning by inventoryViewModel.ignoreSyncWarning.collectAsStateWithLifecycle()
-    
-    var showSyncWebView by remember { mutableStateOf(false) }
-    var syncedFilaments by remember { mutableStateOf<List<VendorFilament>?>(null) }
 
     var showWebCart by remember { mutableStateOf(false) }
     var cartFilaments by remember { mutableStateOf<List<VendorFilament>>(emptyList()) }
@@ -120,7 +176,6 @@ fun AvailabilityScreen(
     val scope = rememberCoroutineScope()
 
     val storeRegion by userPrefs.storeRegionFlow.collectAsState(initial = SyncRegion.EU)
-    val showAddToCartTrackers by userPrefs.showAddToCartTrackersFlow.collectAsState(initial = false)
 
     var isInitialized by rememberSaveable { mutableStateOf(false) }
     var showNonEditable by rememberSaveable { mutableStateOf(false) }

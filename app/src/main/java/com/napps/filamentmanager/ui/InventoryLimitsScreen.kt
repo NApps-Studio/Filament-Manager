@@ -139,7 +139,7 @@ fun InventoryLimitsScreen(
 
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val userPrefs = remember { UserPreferencesRepository(context) }
+    remember { UserPreferencesRepository(context) }
 
     val isLibraryEmpty by vendorViewModel.hasAnyFilaments.observeAsState(initial = false).let { state ->
         derivedStateOf { !state.value }

@@ -6,23 +6,22 @@
 package com.napps.filamentmanager.webscraper
 
 import android.content.Context
+import android.os.Build
+import androidx.core.graphics.createBitmap
+import androidx.core.graphics.get
 import coil.ImageLoader
 import coil.decode.GifDecoder
 import coil.decode.SvgDecoder
+import coil.request.ErrorResult
 import coil.request.ImageRequest
 import coil.request.SuccessResult
-import coil.request.ErrorResult
+import com.napps.filamentmanager.database.SyncRegion
+import com.napps.filamentmanager.database.VendorFilament
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
-import org.json.JSONObject
-import com.napps.filamentmanager.database.VendorFilament
-import androidx.core.graphics.get
-import androidx.core.graphics.createBitmap
-import com.napps.filamentmanager.database.SyncRegion
-import com.napps.filamentmanager.util.SecuritySession
-import android.os.Build
 
 /**
  * Defines the main store URLs for different regions.

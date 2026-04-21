@@ -260,7 +260,7 @@ class BambuMqttManager(
                 val devName = print.optString("dev_name", baseState.devName)
                 val gFile = print.optString("gcode_file", baseState.gcodeFile)
                 val nTemp = print.optDouble("nozzle_temper", baseState.nozzleTemp)
-                val nTarget = print.optDouble("nozzle_target_temper", baseState.nozzleTarget)
+                print.optDouble("nozzle_target_temper", baseState.nozzleTarget)
                 val bTemp = print.optDouble("bed_temper", baseState.bedTemp)
                 val bTarget = print.optDouble("bed_target_temper", baseState.bedTarget)
                 val cTemp = print.optDouble("chamber_temper", baseState.chamberTemp)

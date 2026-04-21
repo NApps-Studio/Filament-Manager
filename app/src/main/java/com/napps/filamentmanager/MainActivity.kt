@@ -11,7 +11,6 @@ import android.content.pm.PackageManager
 import android.nfc.NfcAdapter
 import android.nfc.Tag
 import android.nfc.tech.MifareClassic
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
@@ -31,52 +30,66 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Rect
-import com.napps.filamentmanager.util.tourTarget
-import com.napps.filamentmanager.util.TourOverlay
-import com.napps.filamentmanager.util.TourStep
-import androidx.compose.runtime.*
-import androidx.compose.runtime.mutableStateMapOf
-import androidx.compose.runtime.snapshots.SnapshotStateMap
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountBox
+import androidx.compose.material.icons.filled.Inventory
+import androidx.compose.material.icons.filled.TrackChanges
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.livedata.observeAsState
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
-import androidx.compose.ui.res.painterResource
-import com.napps.filamentmanager.database.*
+import com.napps.filamentmanager.database.AvailabilityMenuText
+import com.napps.filamentmanager.database.BambuViewModel
+import com.napps.filamentmanager.database.BambuViewModelFactory
+import com.napps.filamentmanager.database.FilamentInventoryViewModel
+import com.napps.filamentmanager.database.FilamentInventoryViewModelFactory
+import com.napps.filamentmanager.database.InventoryLimitViewModel
+import com.napps.filamentmanager.database.InventoryLimitViewModelFactory
+import com.napps.filamentmanager.database.SyncRegion
+import com.napps.filamentmanager.database.SyncReportViewModel
+import com.napps.filamentmanager.database.UserPreferencesRepository
+import com.napps.filamentmanager.database.VendorFilamentsViewModel
+import com.napps.filamentmanager.database.VendorFilamentsViewModelFactory
+import com.napps.filamentmanager.ui.InventoryLimitsScreen
+import com.napps.filamentmanager.ui.SyncReportsScreen
 import com.napps.filamentmanager.ui.theme.FilamentManagerTheme
 import com.napps.filamentmanager.util.BambuTagReader
-import com.napps.filamentmanager.database.SyncRegion
+import com.napps.filamentmanager.util.TourOverlay
+import com.napps.filamentmanager.util.TourStep
+import com.napps.filamentmanager.util.tourTarget
 import com.napps.filamentmanager.webscraper.FullSyncWorker
-import com.napps.filamentmanager.webscraper.StartPagesOfVendors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.Executor
-import androidx.compose.ui.unit.dp
-import com.napps.filamentmanager.ui.InventoryLimitsScreen
-import com.napps.filamentmanager.ui.SyncReportsScreen
 
 /**
  * Main entry point for the Filament Manager application.
@@ -274,7 +287,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                         // Wait slightly longer than the Full Sync delay to ensure they appear in sequence
                         delay(200)
                         if (!showInitialSyncDialog) {
-                            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+                            val pm = getSystemService(POWER_SERVICE) as PowerManager
                             if (!pm.isIgnoringBatteryOptimizations(packageName)) {
                                 showBatteryDialog = true
                             } else {
@@ -549,7 +562,7 @@ fun FilamentManagerApp(
     val limitsLazyListState = rememberLazyListState()
     val bambuLazyListState = rememberLazyListState()
     val settingsScrollState = rememberScrollState()
-    val syncReportsScrollState = rememberScrollState()
+    rememberScrollState()
 
     val inventoryExpandedGroups = remember { mutableStateMapOf<String, Boolean>() }
     val availabilityExpandedTrackers = remember { mutableStateMapOf<Int, Boolean>() }
@@ -611,9 +624,8 @@ fun FilamentManagerApp(
 
     if (showLimits) {
         val tourTargets = remember { mutableStateMapOf<String, Rect>() }
-        val tourFlags by userPrefs.tourFlagsFlow.collectAsState(initial = emptyMap())
         var currentTourStep by remember { mutableIntStateOf(0) }
-        val scope = rememberCoroutineScope()
+        rememberCoroutineScope()
         
         BackHandler {
             viewModelInventory.navigateBackFromLimits()
@@ -699,7 +711,7 @@ fun FilamentManagerApp(
         }
 
         if (showSettings) {
-            val scope = rememberCoroutineScope()
+            rememberCoroutineScope()
 
             Box(modifier = Modifier.fillMaxSize()) {
                 SettingsScreen(
@@ -763,7 +775,6 @@ fun FilamentManagerApp(
             )
 
             val groupedFilaments by viewModelInventory.groupedFilaments.collectAsStateWithLifecycle()
-            val summary by viewModelInventory.inventorySummary.collectAsStateWithLifecycle()
             val lowStock by viewModelInventory.lowStockFilaments.collectAsStateWithLifecycle()
             val trackerList by viewModelVendor.allTrackersWithFilaments.observeAsState(emptyList())
 

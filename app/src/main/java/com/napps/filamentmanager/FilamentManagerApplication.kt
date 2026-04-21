@@ -1,16 +1,20 @@
 package com.napps.filamentmanager
 
 import android.app.Application
-import androidx.work.*
+import androidx.work.Constraints
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
 import com.napps.filamentmanager.database.AppDatabase
-import com.napps.filamentmanager.database.VendorFilamentsRepository
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
-import com.napps.filamentmanager.database.FilamentInventoryRepository
 import com.napps.filamentmanager.database.BambuRepository
+import com.napps.filamentmanager.database.FilamentInventoryRepository
 import com.napps.filamentmanager.database.InventoryLimitRepository
 import com.napps.filamentmanager.database.UserPreferencesRepository
+import com.napps.filamentmanager.database.VendorFilamentsRepository
 import com.napps.filamentmanager.mqtt.BambuUpdateWorker
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.util.concurrent.TimeUnit

@@ -8,26 +8,33 @@ import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import androidx.core.app.NotificationCompat
-import androidx.work.*
+import androidx.work.BackoffPolicy
+import androidx.work.Constraints
+import androidx.work.CoroutineWorker
+import androidx.work.ExistingWorkPolicy
+import androidx.work.ForegroundInfo
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import androidx.work.WorkRequest
+import androidx.work.WorkerParameters
+import com.google.gson.Gson
 import com.napps.filamentmanager.MainActivity
 import com.napps.filamentmanager.R
 import com.napps.filamentmanager.database.AppDatabase
 import com.napps.filamentmanager.database.AvailabilityMenuText
+import com.napps.filamentmanager.database.SyncReport
 import com.napps.filamentmanager.database.UserPreferencesRepository
+import com.napps.filamentmanager.database.VendorFilament
+import com.napps.filamentmanager.database.VendorFilamentsDao
 import com.napps.filamentmanager.util.NotificationGroupManager
 import com.napps.filamentmanager.util.SecuritySession
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-
-import com.napps.filamentmanager.database.VendorFilament
-import com.napps.filamentmanager.database.VendorFilamentsDao
-import com.napps.filamentmanager.database.TrackerFilamentCrossRef
-import com.napps.filamentmanager.database.SyncReport
-import com.google.gson.Gson
 import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.delay
 
 /**
  * WorkManager worker responsible for performing a comprehensive "Full Sync" of all
