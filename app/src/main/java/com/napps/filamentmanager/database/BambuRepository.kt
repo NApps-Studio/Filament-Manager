@@ -139,27 +139,29 @@ class BambuRepository(
         val json = entity.rawJson
         if (json.isBlank()) return null
         
+        // Priority for rawSn: Parameter > SecuritySession > Persistent state (if any)
+        val finalRawSn = rawSn ?: SecuritySession.getRawSerial(entity.hashedSerialNumber)
+
         return try {
             val state = if (!json.contains("\"print\":")) {
                 // NEW FORMAT: Full BambuState object
                 gson.fromJson(json, BambuState::class.java)
             } else {
                 // OLD FORMAT: Raw MQTT message
-                if (rawSn != null) {
-                    BambuMqttManager.parseRawJson(json, rawSn)
+                if (finalRawSn != null) {
+                    BambuMqttManager.parseRawJson(json, finalRawSn)
                 } else null
             }
             
-            // Use the column 'lastWorkerSync' as the source of truth if available
+            // Re-inject the serial and sync time from the secure context and column metadata
             state?.copy(
                 lastWorkerSync = entity.lastWorkerSync ?: state.lastWorkerSync,
-                serial = rawSn ?: state.serial
+                serial = finalRawSn ?: state.serial
             )
         } catch (e: Exception) {
-            Log.e("BambuRepository", "Deserialization failed: ${e.message}")
-            // Final fallback: try MQTT parsing anyway
-            if (rawSn != null) {
-                BambuMqttManager.parseRawJson(json, rawSn)?.copy(lastWorkerSync = entity.lastWorkerSync)
+            Log.e("BambuRepository", "Deserialization failed", e)
+            if (finalRawSn != null) {
+                BambuMqttManager.parseRawJson(json, finalRawSn)?.copy(lastWorkerSync = entity.lastWorkerSync)
             } else null
         }
     }
@@ -185,9 +187,12 @@ class BambuRepository(
     ) {
         try {
             val existingEntity = bambuDao.getStatusForPrinter(hashedSn)
-            val finalRawSn = rawSn ?: SecuritySession.getRawSerial(hashedSn) ?: existingEntity?.let { toBambuState(it)?.serial }
+            val finalRawSn = rawSn ?: SecuritySession.getRawSerial(hashedSn) ?: existingEntity?.let { toBambuState(it, null)?.serial }
 
-            if (finalRawSn == null) return
+            if (finalRawSn == null || finalRawSn.isBlank()) {
+                Log.w("BambuRepository", "Aborting save: No raw serial available for $hashedSn")
+                return
+            }
 
             // 1. Reconstruct current state from DB
             val currentState = existingEntity?.let { toBambuState(it, finalRawSn) }
@@ -203,12 +208,15 @@ class BambuRepository(
                     Log.d("BambuRepository", "Applying worker sync time: $workerSyncTime to $hashedSn")
                 }
 
+                // 4. Prepare state for storage: STRIP SENSITIVE DATA
+                // We do NOT persist the raw serial in the telemetry JSON.
                 val stateToSave = updatedState.copy(
+                    serial = "", 
                     lastWorkerSync = finalWorkerTime,
-                    isConnected = false // Never save 'true' to DB, connectivity is live-only
+                    isConnected = false // Never save 'true' to DB
                 )
                 
-                // 4. Save FULL state to DB
+                // 5. Save FULL state to DB
                 val fullJson = gson.toJson(stateToSave)
                 val report = BambuReportEntity(
                     hashedSerialNumber = hashedSn,
@@ -219,11 +227,10 @@ class BambuRepository(
                 )
                 bambuDao.savePrinterStatus(report)
             } else if (error != null && existingEntity != null) {
-                // If parsing failed but we have an error to record, update the error field
                 bambuDao.savePrinterStatus(existingEntity.copy(lastSyncError = error, lastUpdated = System.currentTimeMillis()))
             }
         } catch (e: Exception) {
-            Log.e("BambuRepository", "Error saving status: ${e.message}")
+            Log.e("BambuRepository", "Error saving status", e)
         }
     }
     

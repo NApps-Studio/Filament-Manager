@@ -180,20 +180,21 @@ class BambuUpdateWorker(context: Context, params: WorkerParameters) : CoroutineW
      */
     override suspend fun getForegroundInfo(): ForegroundInfo {
         val notificationManager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val channelId = "bambu_update_channel"
+        val channelId = "sync_channel_Status" // Combined channel
         
         val channel = NotificationChannel(
-            channelId, "Printer Sync", NotificationManager.IMPORTANCE_LOW
+            channelId, "Sync Status", NotificationManager.IMPORTANCE_LOW
         ).apply {
-            description = "Status of printer state synchronization"
+            description = "Status of background sync tasks"
         }
         notificationManager.createNotificationChannel(channel)
 
         val notification = NotificationCompat.Builder(applicationContext, channelId)
-            .setContentTitle("Bambu Filament Manager")
-            .setContentText("Syncing printer status...")
+            .setContentTitle("Filament Manager")
+            .setContentText("Printer Status Syncing...")
             .setSmallIcon(R.drawable.filamentmanagerlogo)
             .setOngoing(true)
+            .setSilent(true)
             .build()
 
         return ForegroundInfo(1004, notification)

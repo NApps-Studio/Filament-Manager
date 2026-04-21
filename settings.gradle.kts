@@ -23,6 +23,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Bambu Filament Manager"
+rootProject.name = "Filament Manager"
 include(":app")
  

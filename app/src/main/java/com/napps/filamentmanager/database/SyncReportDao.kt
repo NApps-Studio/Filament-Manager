@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface SyncReportDao {
     @Insert
-    suspend fun insert(report: SyncReport)
+    suspend fun insert(report: SyncReport): Long
 
     @Insert
     suspend fun insertAll(reports: List<SyncReport>)

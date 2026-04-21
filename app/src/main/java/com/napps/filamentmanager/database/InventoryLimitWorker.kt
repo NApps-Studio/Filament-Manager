@@ -46,20 +46,21 @@ class InventoryLimitWorker(context: Context, params: WorkerParameters) : Corouti
      */
     override suspend fun getForegroundInfo(): ForegroundInfo {
         val notificationManager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val channelId = "inventory_limit_check_channel"
+        val channelId = "sync_channel_Status"
         
         val channel = NotificationChannel(
-            channelId, "Inventory Limit Check", NotificationManager.IMPORTANCE_LOW
+            channelId, "Sync Status", NotificationManager.IMPORTANCE_LOW
         ).apply {
-            description = "Status of inventory limit checking"
+            description = "Status of background sync tasks"
         }
         notificationManager.createNotificationChannel(channel)
 
         val notification = NotificationCompat.Builder(applicationContext, channelId)
-            .setContentTitle("Bambu Filament Manager")
-            .setContentText("Checking inventory limits...")
+            .setContentTitle("Filament Manager")
+            .setContentText("Inventory Limit Check Running...")
             .setSmallIcon(R.drawable.filamentmanagerlogobw)
             .setOngoing(true)
+            .setSilent(true)
             .build()
 
         return ForegroundInfo(1003, notification)

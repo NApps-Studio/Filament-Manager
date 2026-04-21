@@ -1,4 +1,4 @@
-# ProGuard/R8 Rules for Bambu Filament Manager
+# ProGuard/R8 Rules for Filament Manager
 
 # Preserve attributes required for reflection and debugging
 -keepattributes Signature,InnerClasses,AnnotationDefault,EnclosingMethod,Exceptions,*Annotation*,SourceFile,LineNumberTable
@@ -20,13 +20,11 @@
 }
 
 # Preserve internal methods in AbstractByteBufAllocator used by Netty's leak detector
--keepclassmembernames class io.netty.buffer.AbstractByteBufAllocator {
-    private <methods>;
-}
+-keepclassmembernames class io.netty.* {*;}
 
 # RxJava and Dagger
 -keep class io.reactivex.** { *; }
--keep class dagger.internal.DoubleCheck { *; }
+-keep class dagger.internal.*{ *; }
 
 # Data Models (Gson/Room/MQTT) - Fix for Deserialization failed
 # We keep all fields in these packages to ensure JSON mapping works
@@ -63,5 +61,5 @@
 # DO NOT obfuscate class or method names (prevents crashes with reflection/JSON)
 -dontobfuscate
 
-# DO NOT remove unused code (optional, but safer if you want no minification at all)
--dontshrink
+# Shrinking is enabled in build.gradle.kts.
+# We removed -dontshrink to allow R8 to remove unused library code.

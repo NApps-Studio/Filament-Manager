@@ -76,9 +76,10 @@ import kotlinx.coroutines.withContext
 import java.util.concurrent.Executor
 import androidx.compose.ui.unit.dp
 import com.napps.filamentmanager.ui.InventoryLimitsScreen
+import com.napps.filamentmanager.ui.SyncReportsScreen
 
 /**
- * Main entry point for the Bambu Filament Manager application.
+ * Main entry point for the Filament Manager application.
  *
  * This activity manages the primary navigation structure using a [NavigationSuiteScaffold]
  * and coordinates global app states such as NFC scanning, MQTT live updates, and 
@@ -149,10 +150,14 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         setContent {
             FilamentManagerTheme {
                 val isScanSheetVisible by viewModelInventory.isScanSheetVisible.collectAsState()
+                val nfcStatus by viewModelInventory.nfcScanningState.collectAsState()
 
-                LaunchedEffect(isScanSheetVisible) {
-                    if (isScanSheetVisible) enableNfcForegroundDispatch()
-                    else disableNfcForegroundDispatch()
+                LaunchedEffect(isScanSheetVisible, nfcStatus) {
+                    if (isScanSheetVisible && nfcStatus == FilamentInventoryViewModel.NfcStatus.Scanning) {
+                        enableNfcForegroundDispatch()
+                    } else {
+                        disableNfcForegroundDispatch()
+                    }
                 }
 
                 // --- PERMISSION FLOW LOGIC ---
@@ -217,7 +222,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                         text = { Text("A full data sync is already in progress. Would you like to restart it?") },
                         confirmButton = {
                             TextButton(onClick = {
-                                FullSyncWorker.enqueue(applicationContext)
+                                FullSyncWorker.enqueue(applicationContext, force = true)
                                 showRestartSyncDialog = false
                             }) { Text("Restart") }
                         },
@@ -234,7 +239,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                             // User dismissed initial setup dialog - don't force completion
                         },
                         title = { Text("Full Data Sync") },
-                        text = { Text("To enable stock monitoring, ensure correct color mapping for filaments, and link Bambu spools to their store counterparts, a full data sync is required. This ensures that filaments added via NFC scan or from the catalog match the live store data.\n\nPlease note that this process will use your internet connection.This can take some time, You can see the status of the sync on the 'Availability' page. The sync will continue in the background and you will receive a notification upon its completion.\n\nIt is highly recommended to wait for this to finish before adding any filaments or printers.") },
+                        text = { Text("To enable stock monitoring, ensure correct color mapping for filaments, and link Bambu spools to their store counterparts, a full data sync is required. This ensures that filaments added via NFC scan or from the catalog match the live store data.\n\nPlease note that this process will use your internet connection. This can take some time. You can see the status of the sync on the 'Availability' page. The sync will continue in the background and you will receive a notification upon its completion.\n\nNote: This process may occasionally get stuck due to store loading times. If it doesn't progress for several minutes, you may need to run it again from the 'Availability' page. It is highly recommended to wait for this to finish before adding any filaments or printers.") },
                         confirmButton = {
                             Button(onClick = {
                                 showInitialSyncDialog = false
@@ -400,6 +405,13 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         )
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (viewModelInventory.isScanSheetVisible.value) {
+            enableNfcForegroundDispatch()
+        }
+    }
+
     override fun onPause() {
         super.onPause()
         disableNfcForegroundDispatch()
@@ -537,7 +549,7 @@ fun FilamentManagerApp(
     val limitsLazyListState = rememberLazyListState()
     val bambuLazyListState = rememberLazyListState()
     val settingsScrollState = rememberScrollState()
-    val snycReportsScrollState = rememberScrollState()
+    val syncReportsScrollState = rememberScrollState()
 
     val inventoryExpandedGroups = remember { mutableStateMapOf<String, Boolean>() }
     val availabilityExpandedTrackers = remember { mutableStateMapOf<Int, Boolean>() }
@@ -662,10 +674,15 @@ fun FilamentManagerApp(
     } else {
         var showExitPrompt by remember { mutableStateOf(false) }
         var showSettings by rememberSaveable { mutableStateOf(false) }
+        var showSyncReports by rememberSaveable { mutableStateOf(false) }
+        var currentTourStep by remember { mutableIntStateOf(0) }
 
         BackHandler {
             if (showSettings) {
                 showSettings = false
+            } else if (showSyncReports) {
+                showSyncReports = false
+                currentTourStep = 0
             } else if (showExitPrompt) {
                 activity?.finish()
             } else {
@@ -692,17 +709,49 @@ fun FilamentManagerApp(
                     scrollState = settingsScrollState
                 )
             }
+        } else if (showSyncReports) {
+            val tourTargets = remember { mutableStateMapOf<String, Rect>() }
+            val tourFlags by userPrefs.tourFlagsFlow.collectAsState(initial = emptyMap())
+            val scope = rememberCoroutineScope()
+
+            val syncReportsSteps = listOf(
+                TourStep("", "Sync Reports provide a detailed log of sync. If a sync fails, check here to see which specific filaments were affected.")
+            )
+
+            Box(modifier = Modifier.fillMaxSize()) {
+                SyncReportsScreen(
+                    viewModel = viewModelSyncReports,
+                    onBack = {
+                        showSyncReports = false
+                        currentTourStep = 0
+                    },
+                    tourTargets = tourTargets,
+                    isTourActive = tourFlags["SYNC_REPORTS"] ?: false
+                )
+
+                if (tourFlags["SYNC_REPORTS"] ?: false) {
+                    TourOverlay(
+                        steps = syncReportsSteps,
+                        currentStepIndex = currentTourStep,
+                        targets = tourTargets,
+                        onNext = {
+                            if (currentTourStep < syncReportsSteps.size - 1) {
+                                currentTourStep++
+                            } else {
+                                scope.launch {
+                                    userPrefs.updateTourFlag("SYNC_REPORTS", false)
+                                    currentTourStep = 0
+                                }
+                            }
+                        }
+                    )
+                }
+            }
         } else {
             val tourTargets = remember { mutableStateMapOf<String, Rect>() }
             val tourFlags by userPrefs.tourFlagsFlow.collectAsState(initial = emptyMap())
             val authData by viewModelBambu.authData.collectAsState()
-            var currentTourStep by remember { mutableIntStateOf(0) }
             val scope = rememberCoroutineScope()
-            
-            // TOUR: Sync Reports Guide (Linked to sync_reports in Sync reports screen)
-            val syncReportsSteps = listOf(
-                TourStep("", "Sync Reports provide a detailed log of sync. If a sync fails, check here to see which specific filaments were affected.")
-            )
 
             // TOUR: Main App Tour (Targets set in NavigationSuite and NAppsScreen)
             val nappsSteps = listOf(
@@ -798,6 +847,7 @@ fun FilamentManagerApp(
                     listOf(
                         TourStep("acc_more", "Switch between Global and China MQTT brokers for real-time printer updates."),
                         TourStep("acc_refresh", "Manually trigger a refresh of all printer statuses and AMS tray data."),
+                        TourStep("acc_quick_relogin","Relogin into your account when your tokens expire."),
                         TourStep("acc_add", "Add a new printer by entering its serial number."),
                         TourStep("acc_delete", "Disconnect your account and clear all synced printer data. Use this if you want to switch accounts or stop monitoring.")
                     )
@@ -826,7 +876,7 @@ fun FilamentManagerApp(
             Box(modifier = Modifier.fillMaxSize()) {
                 NavigationSuiteScaffold(
                     navigationSuiteItems = {
-                        AppDestinations.entries.forEach {
+                        AppDestinations.entries.filter { it.showInNavBar }.forEach {
                             item(
                                 icon = {
                                     if (it.icon != null) {
@@ -880,6 +930,10 @@ fun FilamentManagerApp(
                                     bambuViewModel = viewModelBambu,
                                     syncReportViewModel = viewModelSyncReports,
                                     userPrefs = userPrefs,
+                                    onShowSyncReports = { 
+                                        showSyncReports = true 
+                                        currentTourStep = 0
+                                    },
                                     tourTargets = tourTargets,
                                     isTourActive = tourFlags["AVAILABILITY"] ?: false,
                                     scrollState = availabilityScrollState,
@@ -922,29 +976,12 @@ fun FilamentManagerApp(
                     )
                 }
 
+
                 if (effectiveDestination == AppDestinations.AVAILABILITY) {
                     val isPageTourActive = (tourFlags["AVAILABILITY"] ?: false)
                     val isCardTourActive = (tourFlags["AVAILABILITY_CARD"] ?: false) && availabilityStepsCard.isNotEmpty()
-                    val isSyncReportsTourActive = (tourFlags["SYNC_REPORTS"] ?: false)
-                    val isShowingSyncReports by viewModelSyncReports.isShowingReports.collectAsStateWithLifecycle()
 
-                    if (isSyncReportsTourActive && isShowingSyncReports) {
-                        TourOverlay(
-                            steps = syncReportsSteps,
-                            currentStepIndex = currentTourStep,
-                            targets = tourTargets,
-                            onNext = {
-                                if (currentTourStep < syncReportsSteps.size - 1) {
-                                    currentTourStep++
-                                } else {
-                                    scope.launch { 
-                                        userPrefs.updateTourFlag("SYNC_REPORTS", false)
-                                        currentTourStep = 0
-                                    }
-                                }
-                            }
-                        )
-                    } else if (isPageTourActive) {
+                    if (isPageTourActive) {
                         TourOverlay(
                             steps = availabilityStepsPage,
                             currentStepIndex = currentTourStep,
@@ -1135,7 +1172,8 @@ fun FilamentManagerApp(
 enum class AppDestinations(
     val label: String,
     val icon: ImageVector? = null,
-    val iconResId: Int? = null
+    val iconResId: Int? = null,
+    val showInNavBar: Boolean = true
 ) {
     BAMBU_ACCOUNT("Bambu Acc.", icon = Icons.Default.AccountBox),
     INVENTORY("Inventory", icon = Icons.Default.Inventory),

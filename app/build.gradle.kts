@@ -14,7 +14,7 @@ android {
         applicationId = "com.napps.filamentmanager"
         minSdk = 31
         targetSdk = 36
-        versionCode = 16
+        versionCode = 21
         versionName = "1.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -22,12 +22,14 @@ android {
 
     buildTypes {
         debug {
-            applicationIdSuffix = ""//".debug"
-            versionNameSuffix = ""//"-debug"
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
             isMinifyEnabled = false
         }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+
         }
     }
     compileOptions {
@@ -61,6 +63,8 @@ dependencies {
     implementation(libs.androidx.paging.compose)
     implementation(libs.coil.compose)
     implementation(libs.coil.base)
+    implementation(libs.coil.svg)
+    implementation(libs.coil.gif)
     implementation(libs.jsoup)
     implementation(libs.gson)
     implementation(libs.androidx.compose.runtime.livedata)

@@ -11,7 +11,7 @@ import androidx.room.PrimaryKey
 data class SyncReport(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val timestamp: Long = System.currentTimeMillis(),
-    val syncType: String, // "Full Sync" or "Background Update"
+    val syncType: String, // "Full Sync" or "Availability Update"
     val summary: String, // e.g., "Completed with 2 errors" or "Successfully synced 45 variants"
     val details: String? = null, // Long-form details of errors or specific failures
     val affectedVariants: Int, // Total variants successfully updated

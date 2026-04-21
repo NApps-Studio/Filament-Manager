@@ -1,313 +1,251 @@
 package com.napps.filamentmanager.webscraper
 
 import android.content.Context
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import com.napps.filamentmanager.database.VendorFilament
-import com.napps.filamentmanager.util.SecuritySession
-import com.napps.filamentmanager.webscraper.unescapeHtml
 import kotlinx.coroutines.*
 import kotlin.coroutines.resume
-import kotlin.coroutines.suspendCoroutine
 import kotlin.time.Duration.Companion.milliseconds
-import com.napps.filamentmanager.database.SyncReport
-
-data class SyncResult(
-    val filaments: List<VendorFilament>,
-    val summary: String,
-    val details: String,
-    val affectedVariants: Int,
-    val errorCount: Int,
-    val isError: Boolean,
-    val syncType: String = "Full Sync"
-)
 
 /**
- * A headless synchronization engine that uses an Android [WebView] to navigate and parse
- * modern, dynamic filament vendor websites.
- *
- * This component handles JavaScript-heavy pages, Cloudflare challenges, and
- * localization issues by simulating a real browser environment.
+ * HeadlessWebViewSync uses a hidden WebView to scrape product data from vendor websites.
  */
 class HeadlessWebViewSync(private val context: Context) {
 
-    private var webView: WebView? = null
-    private val handler = Handler(Looper.getMainLooper())
-
-    fun cleanup() {
-        handler.post {
-            webView?.destroy()
-            webView = null
-        }
-    }
-
-    /**
-     * Synchronizes a list of product links for filament variant details.
-     *
-     * @param links List of URLs to individual product pages.
-     * @param vendor The vendor profile (e.g., BambuWeb Lab).
-     * @param onProgress Callback to report sync progress.
-     * @return A list of [VendorFilament] objects containing the synced data.
-     * @throws CloudflareChallengeException if the site blocks the sync with a challenge.
-     */
-    suspend fun sync(
-        links: List<ProductLink>, 
-        vendor: StartPagesOfVendors,
-        syncType: String = "Full Sync",
-        onProgress: (Int, Int, Int, Int) -> Unit = { _, _, _, _ -> }
-    ): SyncResult = withContext(Dispatchers.Main) {
-        val finalFilaments = mutableListOf<VendorFilament>()
-        val errors = mutableListOf<String>()
-        val totalPages = links.size
-        var filamentsSuccess = 0
-        var pageFailures = 0
-
-        val wv = WebView(context).apply {
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            settings.mediaPlaybackRequiresUserGesture = false
-            val currentUA = settings.userAgentString
-            settings.userAgentString = "$currentUA Language/en-US"
-        }
-        webView = wv
-
-        try {
-            for ((index, productLink) in links.withIndex()) {
-                val pagesDone = index + 1
-                val link = productLink.url
-                
-                var success = false
-                var attempts = 0
-                val maxAttempts = 3
-                
-                while (attempts < maxAttempts && !success) {
-                    attempts++
-                    val htmlRaw = loadPageAndGetHtml(wv, link)
-                    val html = unescapeHtml(htmlRaw ?: "")
-
-                    if (html.isEmpty()) {
-                        if (attempts < maxAttempts) {
-                            delay(2000)
-                            continue
-                        } else {
-                            pageFailures++
-                            errors.add("Failed to load page: $link")
-                            break
-                        }
-                    }
-
-                    if (isCloudflareChallenge(html)) {
-                        if (attempts < maxAttempts) {
-                            Log.d("Sync", "Cloudflare detected, waiting and retrying... ($attempts/$maxAttempts)")
-                            delay(5000) // Wait for potential JS challenge to resolve
-                            continue
-                        } else {
-                            throw CloudflareChallengeException("Cloudflare challenge detected and could not be bypassed after $maxAttempts attempts.")
-                        }
-                    }
-
-                    if (!isEnglish(html)) {
-                        if (attempts < maxAttempts) {
-                            Log.d("Sync", "Language mismatch detected, retrying... ($attempts/$maxAttempts)")
-                            delay(2000)
-                            continue
-                        } else {
-                            pageFailures++
-                            errors.add("Language mismatch (not English) on: $link")
-                            break
-                        }
-                    }
-
-                    var syncedFilaments: List<VendorFilament>? = emptyList()
-                    // Try parsing multiple times if needed, as content might be dynamic
-                    for (parseAttempt in 1..5) {
-                        delay(750.milliseconds)
-                        val jsonLdRaw = wv.evaluateJavascriptSync("document.getElementById('product-jsonld')?.innerHTML")
-                        val jsonLd = unescapeHtml(jsonLdRaw ?: "").trim().removeSurrounding("\"")
-                        
-                        if (jsonLd.isNotEmpty() && jsonLd != "null") {
-                            syncedFilaments = parseBambulabProductPage(jsonLd, isJsonOnly = true)
-                        }
-
-                        if (syncedFilaments.isNullOrEmpty()) {
-                            val currentRawHtml = wv.evaluateJavascriptSync("(function() { return document.documentElement.outerHTML; })();")
-                            val currentHtml = unescapeHtml(currentRawHtml ?: "")
-                            syncedFilaments = parseBambulabProductPage(currentHtml)
-                        }
-
-                        if (!syncedFilaments.isNullOrEmpty()) {
-                            finalFilaments.addAll(syncedFilaments)
-                            filamentsSuccess += syncedFilaments.size
-                            success = true
-                            break
-                        }
-                    }
-                    
-                    if (syncedFilaments.isNullOrEmpty() && attempts == maxAttempts) {
-                        pageFailures++
-                        errors.add("Failed to parse variants from: $link")
-                    }
-                }
-                onProgress(pagesDone, totalPages, filamentsSuccess, pageFailures)
-            }
-        } catch (e: CloudflareChallengeException) {
-            errors.add(e.message ?: "Sync blocked by Cloudflare")
-        } finally {
-            wv.destroy()
-            webView = null
-        }
-
-        val isError = errors.isNotEmpty()
-        val summary = if (isError) {
-            "Sync completed with ${errors.size} issues"
-        } else {
-            "Successfully synced $filamentsSuccess variants"
-        }
-        
-        SyncResult(
-            filaments = finalFilaments,
-            summary = summary,
-            details = errors.joinToString("\n"),
-            affectedVariants = filamentsSuccess,
-            errorCount = errors.size,
-            isError = isError,
-            syncType = syncType
-        )
-    }
-
-    /**
-     * Loads a single page and returns its full HTML source.
-     * For start pages, it attempts multiple retries to ensure dynamic content grid
-     * has finished rendering.
-     */
-    suspend fun loadPageAndGetHtml(url: String): String? = withContext(Dispatchers.Main) {
-        val wv = WebView(context).apply {
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            settings.userAgentString = settings.userAgentString + " Language/en-US"
-        }
-        
-        var finalHtml: String? = null
-        val region = SecuritySession.getRegion()
-        val startLink = StartPagesOfVendors.BAMBU_LAB.getLink(region)
-        val isStartPage = url == startLink
-
-        // Initial load
-        var currentHtmlRaw = loadPageAndGetHtml(wv, url)
-        var cleanHtml = unescapeHtml(currentHtmlRaw ?: "")
-        
-        // Retry loop for English/Cloudflare on initial load
-        var loadAttempts = 0
-        while (loadAttempts < 3 && (cleanHtml.isEmpty() || !isEnglish(cleanHtml) || isCloudflareChallenge(cleanHtml))) {
-            loadAttempts++
-            if (isCloudflareChallenge(cleanHtml)) {
-                delay(5000)
-            } else {
-                delay(2000)
-            }
-            currentHtmlRaw = if (!isEnglish(cleanHtml) && !url.contains("lang=en-US")) {
-                val langUrl = if (url.contains("?")) "$url&lang=en-US" else "$url?lang=en-US"
-                loadPageAndGetHtml(wv, langUrl)
-            } else {
-                wv.evaluateJavascriptSync("(function() { return document.documentElement.outerHTML; })();")
-            }
-            cleanHtml = unescapeHtml(currentHtmlRaw ?: "")
-        }
-
-        // If it's the start page, we wait and retry a few times to let the grid render
-        if (isStartPage) {
-            var gridAttempts = 0
-            while (gridAttempts < 5) {
-                // Check if the product list is actually there
-                val links = parseBambulabStartPage(cleanHtml, url, StartPagesOfVendors.BAMBU_LAB.testHtmlClass)
-                if (!links.isNullOrEmpty()) {
-                    finalHtml = cleanHtml
-                    break
-                }
-                
-                delay(1000.milliseconds)
-                val nextHtmlRaw = wv.evaluateJavascriptSync("(function() { return document.documentElement.outerHTML; })();")
-                cleanHtml = unescapeHtml(nextHtmlRaw ?: "")
-                gridAttempts++
-            }
-        } else {
-            finalHtml = cleanHtml
-        }
-
-        wv.destroy()
-        finalHtml
-    }
-
-    /**
-     * Helper method to perform a single page load with custom headers.
-     * Attempts to force English language by detecting localized keywords in the HTML.
-     */
-    /**
-     * Internal helper to load a URL and wait for its HTML content.
-     * 
-     * Handles:
-     * - English language forcing by detecting localized keywords and reloading with `?lang=en-US`.
-     * - Custom `Accept-Language` headers.
-     * - Resuming the coroutine once the page is fully rendered and Javascript is evaluated.
-     */
-    private suspend fun loadPageAndGetHtml(wv: WebView, url: String): String? = suspendCancellableCoroutine { continuation ->
-        wv.webViewClient = object : WebViewClient() {
-            override fun onPageFinished(view: WebView?, url: String?) {
-                view?.evaluateJavascript("(function() { return document.documentElement.outerHTML; })();") { html ->
-                    val cleanHtml = unescapeHtml(html ?: "")
-                    if (!isEnglish(cleanHtml) && !url.isNullOrEmpty() && !url.contains("lang=en-US")) {
-                        // Attempt to force English by appending lang param
-                        val langUrl = if (url.contains("?")) "$url&lang=en-US" else "$url?lang=en-US"
-                        view.loadUrl(langUrl)
-                    } else {
-                        if (continuation.isActive) continuation.resume(html)
-                    }
-                }
-            }
-
-            override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
-                if (continuation.isActive) continuation.resume(null)
-            }
-        }
-        val headers = mapOf("Accept-Language" to "en-US,en;q=0.9")
-        wv.loadUrl(url, headers)
-    }
-
-    private fun isEnglish(html: String): Boolean {
-        // We look at more characters to find the <html> tag and lang attribute
-        val header = html.take(2000).lowercase()
-        
-        val hasHtmlTag = header.contains("<html")
-        // Flexible check: Match lang="en", lang="en-US", lang='en', etc.
-        val hasEnglishLang = header.contains("lang=\"en") || header.contains("lang='en") || header.contains("lang=en")
-        
-        if (hasHtmlTag && hasEnglishLang) {
-            return true
-        }
-
-        // Fallback: Check for common English keywords that would be localized on other pages
-        val indicators = listOf("Cart", "Account", "Accessories", "Filament", "Support", "Store")
-        return indicators.any { html.contains(it, ignoreCase = false) }
-    }
-
-    private suspend fun WebView.evaluateJavascriptSync(script: String): String? = suspendCoroutine { continuation ->
-        evaluateJavascript(script) { result ->
-            continuation.resume(result)
-        }
-    }
-
-    /**
-     * Checks if the provided HTML content indicates a Cloudflare challenge page.
-     * Automated sync cannot bypass these challenges without user intervention.
-     */
-    private fun isCloudflareChallenge(html: String): Boolean {
-        return html.contains("cf-challenge") || html.contains("ray ID") || html.contains("Checking your browser")
-    }
-
-
     class CloudflareChallengeException(message: String) : Exception(message)
     class LanguageMismatchException(message: String) : Exception(message)
+
+    data class SyncResult(
+        val filaments: List<VendorFilament>,
+        val summary: String,
+        val details: String,
+        val affectedVariants: Int,
+        val errorCount: Int,
+        val isError: Boolean
+    )
+
+    private var webView: WebView? = null
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    private suspend fun getWebView(): WebView = withContext(Dispatchers.Main) {
+        webView?.let { return@withContext it }
+        val wv = WebView(context).apply {
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            settings.userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+            layout(0, 0, 1280, 2000)
+        }
+        webView = wv
+        wv
+    }
+
+    suspend fun loadPageAndGetHtml(url: String): String? = withContext(Dispatchers.Main) {
+        val wv = getWebView()
+        wv.loadUrlAndWait(url)
+    }
+
+    suspend fun sync(
+        productLinks: List<ProductLink>,
+        vendor: StartPagesOfVendors,
+        syncType: String,
+        availabilityOnly: Boolean = false,
+        onProgress: (pagesDone: Int, totalPages: Int, success: Int, failed: Int, newFilaments: List<VendorFilament>) -> Unit
+    ): SyncResult {
+        val allFilaments = mutableListOf<VendorFilament>()
+        var successCount = 0
+        var failureCount = 0
+        val totalPages = productLinks.size
+
+        productLinks.forEachIndexed { index, productLink ->
+            // Update progress BEFORE starting the scrape for this page
+            onProgress(index, totalPages, successCount, failureCount, emptyList())
+            
+            val result = scrapeProductPage(productLink, availabilityOnly = availabilityOnly)
+            if (result.filaments.isNotEmpty()) {
+                allFilaments.addAll(result.filaments)
+                successCount += result.filaments.size
+            } else {
+                failureCount++
+            }
+            // Update progress again AFTER finishing the scrape with the actual results
+            onProgress(index + 1, totalPages, successCount, failureCount, result.filaments)
+        }
+
+        return SyncResult(allFilaments, "$syncType complete", "Synced ${allFilaments.size} items", allFilaments.size, failureCount, failureCount > 0)
+    }
+
+    suspend fun scrapeProductPage(productLink: ProductLink, availabilityOnly: Boolean = false): SyncResult = withContext(Dispatchers.Main) {
+        val wv = getWebView()
+        val initialUrl = productLink.url
+        val forcedEnglishUrl = initialUrl + (if (initialUrl.contains("?")) "&ls=en" else "?ls=en")
+        val finalFilamentsMap = mutableMapOf<String, VendorFilament>()
+        val allColorThumbnails = mutableMapOf<String, String>()
+
+        try {
+            android.util.Log.d("BambuSync", "Initial load (${if(availabilityOnly) "Avail-Only" else "Full"}): $forcedEnglishUrl")
+            val initialHtml = withTimeoutOrNull(45000) { wv.loadUrlAndWait(forcedEnglishUrl) }
+                ?: return@withContext SyncResult(emptyList(), "Timeout", "Page load timed out", 0, 1, true)
+
+            var currentHtml = initialHtml
+            // Fallback: If still not English after forcing URL param, try one more time.
+            if (!isEnglish(currentHtml)) {
+                android.util.Log.w("BambuSync", "Page not in English after forcing param. Retrying...")
+                wv.loadUrl(forcedEnglishUrl)
+                delay(2000)
+                currentHtml = unescapeHtml(wv.evaluateJavascriptSync("document.documentElement.outerHTML") ?: "")
+            }
+
+            // 1. Get all variants from JSON-LD to identify unique "types"
+            val jsonLd = unescapeHtml(wv.evaluateJavascriptSync("document.getElementById('product-jsonld')?.innerHTML") ?: "").trim().removeSurrounding("\"")
+            if (jsonLd.isEmpty() || jsonLd == "null") {
+                return@withContext SyncResult(emptyList(), "Error", "No JSON-LD found", 0, 1, true)
+            }
+
+            val fullParsedBatch = parseBambulabProductPage(jsonLd, isJsonOnly = true) ?: emptyList()
+            if (fullParsedBatch.isEmpty()) return@withContext SyncResult(emptyList(), "Error", "Parsed batch empty", 0, 1, true)
+
+            if (availabilityOnly) {
+                // For background sync, we just want the availability from the JSON-LD
+                fullParsedBatch.forEach { finalFilamentsMap[it.sku ?: "UNK_${it.variantName}"] = it }
+                val results = finalFilamentsMap.values.toList()
+                return@withContext SyncResult(results, "Success", "Updated availability for ${results.size} variants", results.size, 0, false)
+            }
+
+            // 2. Group variants by their "Material Type"
+            val typeGroups = fullParsedBatch.groupBy { filament ->
+                (filament.type ?: "").lowercase()
+                    .replace(Regex("filament.*spool|filament|spool|refill"), "")
+                    .replace(Regex("[()\\-/_]"), " ")
+                    .replace(Regex("\\s+"), " ")
+                    .trim()
+            }
+            
+            android.util.Log.d("BambuSync", "Detected ${typeGroups.size} groups: ${typeGroups.keys.joinToString(", ")}")
+
+            // 3. Determine how to gather swatches
+            if (typeGroups.size > 1) {
+                // Multi-material page (e.g. TPU 85A/90A)
+                // Load specific pages for EACH material type to get correct swatches for each.
+                for ((groupName, filaments) in typeGroups) {
+                    val representative = filaments.firstOrNull() ?: continue
+                    val url = representative.typeLink ?: continue
+                    val domain = initialUrl.substringBefore("/products/")
+                    val fullUrl = when {
+                        url.startsWith("http") -> url
+                        url.startsWith("/") -> "$domain$url"
+                        else -> {
+                            val base = initialUrl.substringBefore("?")
+                            if (url.startsWith("?")) "$base$url" else "$base?id=$url"
+                        }
+                    }
+                    val groupUrlWithEn = fullUrl + (if (fullUrl.contains("?")) "&ls=en" else "?ls=en")
+                    android.util.Log.d("BambuSync", "Loading material group page ($groupName): $groupUrlWithEn")
+                    val groupHtml = withTimeoutOrNull(30000) { wv.loadUrlAndWait(groupUrlWithEn) }
+                    if (groupHtml != null) {
+                        allColorThumbnails.putAll(parseColorThumbnails(groupHtml))
+                    }
+                }
+            } else {
+                // Single material page (e.g. PLA Basic)
+                // The initial page already has everything we need.
+                allColorThumbnails.putAll(parseColorThumbnails(currentHtml))
+            }
+
+            // 5. Final processing: Match all filaments to the gathered swatches
+            val currentUA = wv.settings.userAgentString
+            val processed = withContext(Dispatchers.Default) {
+                fullParsedBatch.map { filament ->
+                    val targetColor = (filament.colorName ?: "").trim()
+                    var thumbUrl = allColorThumbnails.entries.find { it.key.trim().equals(targetColor, ignoreCase = true) }?.value
+                    
+                    if (thumbUrl == null) {
+                        // Robust Token Matching
+                        val targetTokens = targetColor.lowercase().split(Regex("[\\s\\-/_(),.]+")).filter { it.length > 1 }.toSet()
+                        thumbUrl = allColorThumbnails.entries.map { entry ->
+                            val swatchTokens = entry.key.lowercase().split(Regex("[\\s\\-/_(),.]+")).filter { it.length > 1 }.toSet()
+                            entry.value to targetTokens.intersect(swatchTokens).size
+                        }.filter { it.second > 0 }.maxByOrNull { it.second }?.first
+                    }
+
+                    if (thumbUrl != null) {
+                        val colorInt = getPixelFromUrl(context, thumbUrl, initialUrl, currentUA)
+                        filament.copy(colorRgb = colorInt ?: 0xFF888888.toInt())
+                    } else {
+                        val fallbackColor = when(targetColor.lowercase()) {
+                            "white" -> 0xFFFFFFFF.toInt()
+                            "black" -> 0xFF1A1A1A.toInt()
+                            "red" -> 0xFFE63946.toInt()
+                            "blue" -> 0xFF457B9D.toInt()
+                            else -> null
+                        }
+                        filament.copy(colorRgb = fallbackColor ?: 0xFF888888.toInt())
+                    }
+                }
+            }
+
+            processed.forEach { finalFilamentsMap[it.sku ?: "UNK_${it.variantName}"] = it }
+            val results = finalFilamentsMap.values.toList()
+            return@withContext SyncResult(results, "Success", "Synced ${results.size} variants", results.size, 0, false)
+
+        } catch (e: Exception) {
+            Log.e("BambuSync", "Scrape failed", e)
+            return@withContext SyncResult(emptyList(), "Error", e.message ?: "Unknown", 0, 1, true)
+        }
+    }
+
+    fun cleanup() {
+        mainHandler.post { webView?.destroy(); webView = null }
+    }
+
+    private suspend fun WebView.loadUrlAndWait(url: String): String? = suspendCancellableCoroutine { cont ->
+        var resumed = false
+        webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView?, url: String?) {
+                mainHandler.postDelayed({
+                    if (!resumed) {
+                        resumed = true
+                        view?.evaluateJavascript("(function() { return document.documentElement.outerHTML; })();") { html ->
+                            cont.resume(unescapeHtml(html ?: ""))
+                        }
+                    }
+                }, 800)
+            }
+            override fun onReceivedError(view: WebView?, code: Int, desc: String?, fUrl: String?) {
+                if (!resumed) { resumed = true; cont.resume(null) }
+            }
+        }
+        loadUrl(url)
+        mainHandler.postDelayed({ if (!resumed) { resumed = true; cont.resume(null) } }, 45000)
+    }
+
+    private suspend fun WebView.evaluateJavascriptSync(script: String): String? = suspendCancellableCoroutine { cont ->
+        evaluateJavascript(script) { result -> cont.resume(result) }
+    }
+
+    private fun isEnglish(html: String) = html.contains("lang=\"en\"", true) || 
+                                          html.contains("Add to cart", true) || 
+                                          html.contains("Shipping policy", true) || 
+                                          html.contains("Description", true)
+
+    private fun unescapeHtml(html: String): String {
+        return html.replace("\\u003C", "<").replace("\\u003E", ">").replace("\\u0026", "&")
+            .replace("\\\"", "\"").replace("\\n", "\n").replace("\\r", "\r")
+            .replace("&nbsp;", " ").replace("&quot;", "\"").replace("&amp;", "&")
+            .trim('"').trim()
+    }
+
+    private suspend fun getPixelFromUrl(context: Context, url: String, referer: String, ua: String): Int? = withContext(Dispatchers.IO) {
+        try {
+            val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+            connection.setRequestProperty("User-Agent", ua)
+            connection.setRequestProperty("Referer", referer)
+            connection.connect()
+            val bitmap = android.graphics.BitmapFactory.decodeStream(connection.inputStream)
+            val pixel = bitmap?.getPixel(bitmap.width / 2, bitmap.height / 2)
+            bitmap?.recycle()
+            pixel
+        } catch (e: Exception) { null }
+    }
 }

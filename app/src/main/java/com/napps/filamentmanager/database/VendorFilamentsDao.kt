@@ -279,6 +279,12 @@ interface VendorFilamentsDao {
     @Query("SELECT EXISTS(SELECT 1 FROM vendor_filaments)")
     fun hasAnyFilaments(): LiveData<Boolean>
 
+    /**
+     * Efficiently checks if the vendor catalog has any entries (Suspend version).
+     */
+    @Query("SELECT EXISTS(SELECT 1 FROM vendor_filaments)")
+    suspend fun hasAnyFilamentsStatic(): Boolean
+
     /** Clears the entire vendor catalog. */
     @Query("DELETE FROM vendor_filaments")
     suspend fun deleteAllFilaments()

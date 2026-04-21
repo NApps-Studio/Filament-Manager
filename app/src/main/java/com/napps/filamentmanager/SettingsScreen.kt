@@ -390,6 +390,19 @@ fun SettingsScreen(
                 }
             )
 
+            val showAddToCartTrackers by userPrefs.showAddToCartTrackersFlow.collectAsState(initial = false)
+            ListItem(
+                headlineContent = { Text("Show 'Add to Cart' on Trackers") },
+                supportingContent = { Text("Enable experimental button to add items directly to your Bambu cart. (Work in progress)") },
+                trailingContent = {
+                    Switch(
+                        checked = showAddToCartTrackers,
+                        onCheckedChange = { scope.launch { userPrefs.setShowAddToCartTrackers(it) } },
+                        modifier = Modifier.scale(0.8f)
+                    )
+                }
+            )
+
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
             // 6. Development Tools

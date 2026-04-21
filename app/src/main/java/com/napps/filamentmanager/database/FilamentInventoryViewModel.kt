@@ -408,15 +408,19 @@ class FilamentInventoryViewModel(
         } else {
             _nfcScanningState.value = NfcStatus.Error("Could not decode Bambu Data")
             _scannedExistingFilament.value = null
-            
-            // Auto-retry: return to Scanning after a delay
             viewModelScope.launch {
                 delay(1500)
-                if (_nfcScanningState.value is NfcStatus.Error) {
-                    _nfcScanningState.value = NfcStatus.Scanning
-                }
+                retryScan()
             }
         }
+    }
+
+    /** Manually resets the NFC state to Scanning. */
+    fun retryScan() {
+        _nfcScanningState.value = NfcStatus.Scanning
+        _scannedSpoolData.value = null
+        _scannedExistingFilament.value = null
+        _scanSummary.value = null
     }
 
     // --- POTENTIAL OUT OF STOCK ---
@@ -567,12 +571,29 @@ class FilamentInventoryViewModel(
      * @return A Pair containing the LiveData for the inserted filament and a 
      * boolean indicating if it was a new insertion (true) or an existing record (false).
      */
-    suspend fun insertScannedFilamentBambuLab(filamentData: BambuSpoolData?): Pair<LiveData<FilamentInventory>, Boolean> {
+    suspend fun insertScannedFilamentBambuLab(
+        filamentData: BambuSpoolData?,
+        colorNameOverride: String? = null,
+        colorRgbOverride: Int? = null
+    ): Pair<LiveData<FilamentInventory>, Boolean> {
         //check if filament exist by trayUID
 
         val existing = getFilamentByTrayUidStatic(filamentData?.trayUid ?: "")
         if (existing == null) {
             val colorRgb = safeParseColor(filamentData?.colorHex)
+
+            // 1. Add to ColorCrossRef if we have an override
+            if (colorNameOverride != null && colorRgbOverride != null && colorRgb != null) {
+                repository.insertMapping(ColorCrossRef(
+                    brand = "Bambu Lab",
+                    type = filamentData?.detailedType ?: "Unknown",
+                    materialVariantID = filamentData?.materialVariantId ?: "",
+                    tagColorRgb = colorRgb,
+                    colorName = colorNameOverride,
+                    colorInt = colorRgbOverride
+                ))
+            }
+
             val colorRef = if (colorRgb != null && filamentData?.materialVariantId != null) {
                 repository.getColorCrossRef("Bambu Lab", filamentData.detailedType ?: "Unknown", filamentData.materialVariantId, colorRgb)
             } else if (colorRgb != null) {
@@ -585,8 +606,8 @@ class FilamentInventoryViewModel(
                 materialVariantID = filamentData?.materialVariantId,
                 materialID = filamentData?.materialId,
                 diameter = filamentData?.diameterMm,
-                colorName = colorRef?.colorName ?: "Unknown",
-                colorRgb = colorRef?.colorInt ?: colorRgb,
+                colorName = colorNameOverride ?: colorRef?.colorName ?: "Unknown",
+                colorRgb = colorRgbOverride ?: colorRef?.colorInt ?: colorRgb,
                 tagColorRgb = colorRgb,
                 trayUID = filamentData?.trayUid,
                 timestamp = System.currentTimeMillis(),

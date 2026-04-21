@@ -45,6 +45,7 @@ class UserPreferencesRepository(private val context: Context) {
         val TOUR_UNMAPPED = booleanPreferencesKey("tour_unmapped")
         val TOUR_SYNC_REPORTS = booleanPreferencesKey("tour_sync_reports")
         val HAS_SHOWN_TOUR_DECISION = booleanPreferencesKey("has_shown_tour_decision")
+        val SHOW_ADD_TO_CART_TRACKERS = booleanPreferencesKey("show_add_to_cart_trackers")
         val HAS_ADDED_FILAMENT = booleanPreferencesKey("has_added_filament")
         val HAS_ADDED_PRINTER = booleanPreferencesKey("has_added_printer")
         val HAS_ADDED_TRACKER = booleanPreferencesKey("has_added_tracker")
@@ -336,9 +337,9 @@ class UserPreferencesRepository(private val context: Context) {
     val showEmptySpoolsFlow: Flow<Boolean> = context.dataStore.data
         .map { it[PreferencesKeys.SHOW_EMPTY_SPOOLS] ?: true }
 
-    /**
-     * Flag indicating if debug mode is enabled.
-     */
+    val showAddToCartTrackersFlow: Flow<Boolean> = context.dataStore.data
+        .map { it[PreferencesKeys.SHOW_ADD_TO_CART_TRACKERS] ?: false }
+
     val debugModeFlow: Flow<Boolean> = context.dataStore.data
         .map { it[PreferencesKeys.DEBUG_MODE] ?: false }
 
@@ -406,6 +407,10 @@ class UserPreferencesRepository(private val context: Context) {
     }
     suspend fun setShowEmptySpools(show: Boolean) {
         context.dataStore.edit { it[PreferencesKeys.SHOW_EMPTY_SPOOLS]=show }
+    }
+
+    suspend fun setShowAddToCartTrackers(show: Boolean) {
+        context.dataStore.edit { it[PreferencesKeys.SHOW_ADD_TO_CART_TRACKERS] = show }
     }
 
     suspend fun setDebugMode(enabled: Boolean) {

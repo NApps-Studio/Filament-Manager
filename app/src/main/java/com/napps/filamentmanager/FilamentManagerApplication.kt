@@ -16,7 +16,7 @@ import kotlinx.coroutines.launch
 import java.util.concurrent.TimeUnit
 
 /**
- * Main application class for the Bambu Filament Manager.
+ * Main application class for the Filament Manager.
  * 
  * Responsibilities:
  * 1. Dependency Management: Lazy initialization of Repositories and Daos.
@@ -38,9 +38,18 @@ class FilamentManagerApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         
-        // Schedule initial updates
+        // Schedule initial updates and check for pre-populated DB
         applicationScope.launch {
-            val userPrefs = UserPreferencesRepository(this@FilamentManagerApplication)
+            val userPrefs = userPreferencesRepository
+            
+            // If the DB has filaments but the flag is false, it means we just pre-populated!
+            val hasFilaments = database.vendorFilamentsDao().hasAnyFilamentsStatic()
+            val syncFinished = userPrefs.hasFirstSyncFinishedFlow.first()
+            
+            if (hasFilaments && !syncFinished) {
+                userPrefs.setFirstSyncFinished(true)
+            }
+
             val interval = userPrefs.printerUpdateIntervalFlow.first()
             scheduleBambuUpdates(interval)
         }

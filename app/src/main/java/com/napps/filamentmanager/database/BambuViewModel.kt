@@ -94,6 +94,12 @@ class BambuViewModel(
      */
     val isTokenExpired = _isTokenExpired.asStateFlow()
 
+    private val _isDecryptionFailed = MutableStateFlow(false)
+    /**
+     * State indicating if the Keystore keys don't match the saved data.
+     */
+    val isDecryptionFailed = _isDecryptionFailed.asStateFlow()
+
     private val managers = mutableMapOf<String, BambuMqttManager>()
 
     init {
@@ -125,20 +131,32 @@ class BambuViewModel(
     private suspend fun autoInitializeSession(auth: BambuLab) {
         withContext(Dispatchers.IO) {
             try {
+                // Defensive check: Ensure encryption fields are actually present
+                if (auth.encryptedToken.isBlank() || auth.iv.isBlank()) {
+                    Log.e("BambuViewModel", "Auto-init aborted: Missing encrypted token or IV")
+                    return@withContext
+                }
+
                 val clearToken = CryptoManager.decrypt(auth.encryptedToken, auth.iv)
                 SecuritySession.initialize(clearToken, auth.uid, auth.region, auth.isInChina)
 
                 val printers = repository.getAllPrinters()
-                val decryptedSerials = printers.associate { p ->
+                val decryptedSerials = printers.filter {
+                    it.encryptedSerial.isNotBlank() && it.iv.isNotBlank()
+                }.associate { p ->
                     p.hashedSerial to CryptoManager.decrypt(p.encryptedSerial, p.iv)
                 }
                 SecuritySession.setDecryptedPrinters(decryptedSerials)
 
                 withContext(Dispatchers.Main) {
+                    _isDecryptionFailed.value = false
                     startLiveUpdates()
                 }
             } catch (e: Exception) {
-                Log.e("BambuViewModel", "Auto-init failed: ${e.message}")
+                Log.e("BambuViewModel", "Auto-init failed due to decryption error (likely Keystore invalidated).", e)
+                withContext(Dispatchers.Main) {
+                    _isDecryptionFailed.value = true
+                }
             }
         }
     }
@@ -264,6 +282,7 @@ class BambuViewModel(
                 repository.saveBambuAuth(newAuth)
                 SecuritySession.initialize(clearToken, uid, region, isInChina)
                 _isTokenExpired.value = false
+                _isDecryptionFailed.value = false
                 stopLiveUpdates()
                 startLiveUpdates()
             } catch (e: Exception) {
@@ -354,6 +373,7 @@ class BambuViewModel(
             SecuritySession.clear()
             _connectivityStates.value = emptyMap()
             _isTokenExpired.value = false
+            _isDecryptionFailed.value = false
         }
     }
 

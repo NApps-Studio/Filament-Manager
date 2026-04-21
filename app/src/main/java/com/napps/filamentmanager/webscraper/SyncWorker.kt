@@ -16,7 +16,9 @@ import com.napps.filamentmanager.database.VendorFilament
 import com.napps.filamentmanager.database.SyncReport
 import com.google.gson.Gson
 import com.napps.filamentmanager.util.NotificationGroupManager
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
@@ -28,7 +30,7 @@ import java.util.concurrent.TimeUnit
  *
  * Unlike [FullSyncWorker], this worker only syncs specific product pages
  * associated with active trackers, making it much more efficient for routine
- * background updates.
+ * availability updates.
  */
 class SyncWorker(
     val appContext: Context,
@@ -47,10 +49,11 @@ class SyncWorker(
         notificationManager.createNotificationChannel(channel)
 
         val notification = NotificationCompat.Builder(appContext, channelId)
-            .setContentTitle("Bambu Filament Manager")
-            .setContentText("Checking filament availability...")
+            .setContentTitle("Filament Manager")
+            .setContentText("Filament Availability Check Running...")
             .setSmallIcon(R.drawable.filamentmanagerlogobw)
             .setOngoing(true)
+            .setSilent(true)
             .build()
 
         return ForegroundInfo(1001, notification)
@@ -65,30 +68,96 @@ class SyncWorker(
     override suspend fun doWork(): Result = withContext(Dispatchers.Main) {
         val database = AppDatabase.getDatabase(appContext)
         val dao = database.vendorFilamentsDao()
+        val reportDao = database.syncReportDao()
         val userPrefs = UserPreferencesRepository(appContext)
         
-        val links = withContext(Dispatchers.IO) {
-            dao.getAllTrackersWithNotificationsStatic()
-                .flatMap { it.filaments }.mapNotNull { it.typeLink }.distinct()
+        val startTime = System.currentTimeMillis()
+        var reportId: Long = -1
+        
+        // Create an initial report entry so it shows up immediately
+        withContext(Dispatchers.IO) {
+            val initialReport = SyncReport(
+                timestamp = startTime,
+                syncType = "Availability Update",
+                summary = "Sync starting...",
+                affectedVariants = 0,
+                errorCount = 0,
+                isError = false
+            )
+            reportId = reportDao.insert(initialReport)
         }
 
-        if (links.isEmpty()) return@withContext Result.success()
+        val links = withContext(Dispatchers.IO) {
+            dao.getAllTrackersWithNotificationsStatic()
+                .flatMap { it.filaments }
+                .mapNotNull { it.typeLink }
+                .map { it.substringBefore("?") } // Remove variant IDs to load the main product page
+                .distinct()
+        }
+
+        if (links.isEmpty()) {
+            withContext(Dispatchers.IO) {
+                reportDao.update(SyncReport(
+                    id = reportId.toInt(),
+                    timestamp = startTime,
+                    syncType = "Availability Update",
+                    summary = "Finished: No active trackers found to check.",
+                    affectedVariants = 0,
+                    errorCount = 0,
+                    isError = false
+                ))
+            }
+            return@withContext Result.success()
+        }
 
         NotificationGroupManager.updateStatus(appContext, "SyncWorker", "Checking ${links.size} pages...", "sync_channel_Status")
 
         val syncEngine = HeadlessWebViewSync(appContext)
         try {
-            val productLinks = links.map { ProductLink(it, 1) }
-            val syncResult = syncEngine.sync(productLinks, StartPagesOfVendors.BAMBU_LAB, "Background Update") { pagesDone, totalPages, success, failed ->
+            val productLinks = links.map { link ->
+                val typeName = link.substringBefore("?").substringAfterLast("/").replace("-", " ").replaceFirstChar { it.uppercase() }
+                ProductLink(link, 1, typeName)
+            }
+            val syncResult = syncEngine.sync(productLinks, StartPagesOfVendors.BAMBU_LAB, "Availability Update", availabilityOnly = true) { pagesDone: Int, totalPages: Int, success: Int, failed: Int, newFilaments: List<VendorFilament> ->
                 val progressText = "Checking: $pagesDone/$totalPages | Success: $success | Failed: $failed"
                 NotificationGroupManager.updateStatus(appContext, "SyncWorker", progressText, "sync_channel_Status")
+                
+                // Update the existing report with progress
+                CoroutineScope(Dispatchers.IO).launch {
+                    val currentReport = SyncReport(
+                        id = reportId.toInt(),
+                        timestamp = startTime,
+                        syncType = "Availability Update",
+                        summary = progressText,
+                        affectedVariants = success,
+                        errorCount = failed,
+                        isError = failed > 0,
+                        syncedContent = "Syncing in progress..."
+                    )
+                    reportDao.update(currentReport)
+
+                    // Incremental database update for background sync
+                    for (syncItem in newFilaments) {
+                        val existing = dao.getFilamentBySku(syncItem.sku ?: "-1")
+                        if (existing != null) {
+                            dao.update(existing.copy(
+                                isAvailable = syncItem.isAvailable,
+                                timestamp = syncItem.timestamp,
+                                error = syncItem.error,
+                                status = syncItem.status
+                            ))
+                        }
+                    }
+                }
             }
-            
+
             val syncList = syncResult.filaments
-            
+
             withContext(Dispatchers.IO) {
-                val report = SyncReport(
-                    syncType = "Background Update",
+                val finalReport = SyncReport(
+                    id = reportId.toInt(),
+                    timestamp = startTime,
+                    syncType = "Availability Update",
                     summary = syncResult.summary,
                     details = syncResult.details,
                     affectedVariants = syncResult.affectedVariants,
@@ -96,32 +165,19 @@ class SyncWorker(
                     isError = syncResult.isError,
                     syncedContent = Gson().toJson(syncList)
                 )
-                AppDatabase.getDatabase(appContext).syncReportDao().insert(report)
+                reportDao.update(finalReport)
 
-                syncList.forEach { syncItem ->
-                    val existing = dao.getFilamentBySku(syncItem.sku ?: "-1")
-                    if (existing != null) {
-                        dao.update(existing.copy(
-                            isAvailable = syncItem.isAvailable,
-                            timestamp = syncItem.timestamp,
-                            error = syncItem.error,
-                            status = syncItem.status
-                        ))
+                // Final status check and menu update
+                val trackers = dao.getAllTrackersWithNotificationsStatic()
+                val statusText = if (trackers.isNotEmpty()) "Enabled" else "Disabled"
+                val currentTime = System.currentTimeMillis()
+                val menuText = dao.getMenuTextStatic("TopMenuRow1")
+                if (menuText != null) {
+                    if (!menuText.text.contains("Full sync")) {
+                        dao.update(menuText.copy(text = statusText, lastUpdated = currentTime))
                     }
-                }
-                
-                if (syncList.isNotEmpty()) {
-                    val trackers = dao.getAllTrackersWithNotificationsStatic()
-                    val statusText = if (trackers.isNotEmpty()) "Enabled" else "Disabled"
-                    val currentTime = System.currentTimeMillis()
-                    val menuText = dao.getMenuTextStatic("TopMenuRow1")
-                    if (menuText != null) {
-                        if (!menuText.text.contains("Full sync")) {
-                            dao.update(menuText.copy(text = statusText, lastUpdated = currentTime))
-                        }
-                    } else {
-                        dao.insert(AvailabilityMenuText(id = 1, name = "TopMenuRow1", text = statusText, lastUpdated = currentTime))
-                    }
+                } else {
+                    dao.insert(AvailabilityMenuText(id = 1, name = "TopMenuRow1", text = statusText, lastUpdated = currentTime))
                 }
                 
                 val readyTrackers = dao.getFullyAvailableTrackersStatic()
@@ -152,28 +208,32 @@ class SyncWorker(
             NotificationGroupManager.updateStatus(appContext, "SyncWorker", "Manual action required (Cloudflare)", "sync_channel_Status")
             withContext(Dispatchers.IO) {
                 val report = SyncReport(
-                    syncType = "Background Update",
+                    id = reportId.toInt(),
+                    timestamp = startTime,
+                    syncType = "Availability Update",
                     summary = "Sync blocked by Cloudflare",
                     details = "Manual verification required in store",
                     affectedVariants = 0,
                     errorCount = 1,
                     isError = true
                 )
-                AppDatabase.getDatabase(appContext).syncReportDao().insert(report)
+                reportDao.update(report)
             }
             Result.retry()
         } catch (e: Exception) {
             NotificationGroupManager.updateStatus(appContext, "SyncWorker", "Error: ${e.message}", "sync_channel_Status")
             withContext(Dispatchers.IO) {
                 val report = SyncReport(
-                    syncType = "Background Update",
+                    id = reportId.toInt(),
+                    timestamp = startTime,
+                    syncType = "Availability Update",
                     summary = "Critical sync failure",
                     details = "Error: ${e.message}",
                     affectedVariants = 0,
                     errorCount = 1,
                     isError = true
                 )
-                AppDatabase.getDatabase(appContext).syncReportDao().insert(report)
+                reportDao.update(report)
             }
             Result.failure()
         }

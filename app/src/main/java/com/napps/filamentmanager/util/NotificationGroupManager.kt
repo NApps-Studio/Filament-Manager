@@ -81,7 +81,17 @@ object NotificationGroupManager {
             return
         }
 
-        val content = "${activeStatuses.size} background services active"
+        val serviceNames = serviceStatuses.keys.map { id ->
+            when (id) {
+                "BambuUpdateWorker" -> "Printer Sync"
+                "InventoryLimitWorker" -> "Inventory Limits"
+                "SyncWorker" -> "Availability Check"
+                "FullSyncWorker" -> "Full Sync"
+                else -> id
+            }
+        }.joinToString(", ")
+
+        val content = "${activeStatuses.size} services active: $serviceNames"
 
         val summaryNotification = NotificationCompat.Builder(context, SUMMARY_CHANNEL_ID)
             .setContentTitle("Filament Manager Services")

@@ -54,6 +54,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Nfc
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -96,6 +97,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.runtime.snapshots.SnapshotStateMap
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.onFocusEvent
 import com.napps.filamentmanager.ui.SyncWarningDialog
 import com.napps.filamentmanager.ui.WarningIconOverlay
@@ -679,10 +681,16 @@ fun InventoryScreen(
             NfcScanSheet(
                 status = nfcStatus,
                 spoolData = spoolData,
-                onDismiss = { viewModel.setShowScanSheet(false) },
-                onAddClick = { data ->
+                onDismiss = {
+                    viewModel.setShowScanSheet(false)
+                    // Reset status to Idle so the next scan triggers a fresh "Ready" state
+                    if (nfcStatus is FilamentInventoryViewModel.NfcStatus.Error) {
+                        viewModel.retryScan()
+                    }
+                },
+                onAddClick = { data, colorName, colorRgb ->
                     scope.launch(Dispatchers.IO) {
-                        val result = viewModel.insertScannedFilamentBambuLab(data)
+                        val result = viewModel.insertScannedFilamentBambuLab(data, colorName, colorRgb)
                         val filamentLiveData = result.first
                         val isNewSpool = result.second
 
@@ -690,12 +698,17 @@ fun InventoryScreen(
                             filamentLiveData.observeForever(object : androidx.lifecycle.Observer<FilamentInventory> {
                                 override fun onChanged(value: FilamentInventory) {
                                     scanResultPair = Pair(filamentLiveData, isNewSpool)
-                                    showSpoolAddMenu = true
-                                    val needsColor = isNewSpool && value.colorName.isNullOrBlank()
-                                    if (needsColor) {
-                                        isFetchingColors = true
-                                        vendorFilamentsViewModel.setSelectedBrand(value.brand)
-                                        vendorFilamentsViewModel.setSelectedType(value.type)
+                                    // Only show the post-scan menu if we didn't already resolve the color in the sheet
+                                    if (colorName == null) {
+                                        showSpoolAddMenu = true
+                                        val needsColor = isNewSpool && value.colorName.isNullOrBlank()
+                                        if (needsColor) {
+                                            isFetchingColors = true
+                                            vendorFilamentsViewModel.setSelectedBrand(value.brand)
+                                            vendorFilamentsViewModel.setSelectedType(value.type)
+                                        }
+                                    } else {
+                                        viewModel.setShowScanSheet(false)
                                     }
                                     filamentLiveData.removeObserver(this)
                                 }
@@ -703,7 +716,8 @@ fun InventoryScreen(
                         }
                     }
                 },
-                viewModel = viewModel
+                viewModel = viewModel,
+                vendorFilamentsViewModel = vendorFilamentsViewModel
             )
         }
         if (showSpoolAddMenu && scanResultPair != null) {
@@ -1138,7 +1152,9 @@ fun ScannedFilamentEditDialog(
     onDelete: (FilamentInventory) -> Unit
 ) {
     var selectedStatus by remember { mutableIntStateOf(filament.availabilityStatus) }
-    var selectedColorInfo by remember { mutableStateOf<ColorInfo?>(null) }
+    var selectedColorInfo by remember {
+        mutableStateOf<ColorInfo?>(ColorInfo(filament.colorName, filament.colorRgb))
+    }
     var isColorValid by remember { mutableStateOf(true) }
     var percentInput by remember { mutableFloatStateOf((filament.usedPercent ?: 1.0f) * 100f) }
     val statusMap = mapOf(
@@ -1249,8 +1265,6 @@ fun ScannedFilamentEditDialog(
                         selectedOption = selectedColorInfo,
                         targetColorInt = filament.colorRgb,
                         onOptionSelected = { selectedColorInfo = it },
-                        expanded = isDropdownExpanded,
-                        onExpandedChange = { isDropdownExpanded = it },
                         onValidationChanged = { isColorValid = it }
                     )
                 } else {
@@ -1332,11 +1346,10 @@ fun SearchableColorDropdown(
     options: List<ColorInfo>,
     selectedOption: ColorInfo?,
     targetColorInt: Int?,
-    expanded: Boolean,
-    onExpandedChange: (Boolean) -> Unit,
     onOptionSelected: (ColorInfo?) -> Unit,
     onValidationChanged: (Boolean) -> Unit
 ) {
+    var expanded by remember { mutableStateOf(false) }
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     var searchText by remember(selectedOption) { mutableStateOf(selectedOption?.colorName ?: "") }
 
@@ -1381,12 +1394,16 @@ fun SearchableColorDropdown(
         shadow = Shadow(color = Color.Black, offset = Offset(1f, 1f), blurRadius = 4f)
     )
 
-    Column(modifier = Modifier.padding(vertical = 4.dp).fillMaxWidth()) {
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+        modifier = Modifier.padding(vertical = 4.dp).fillMaxWidth()
+    ) {
         OutlinedTextField(
             value = searchText,
             onValueChange = { newValue ->
                 searchText = newValue
-                onExpandedChange(true)
+                expanded = true
                 val match = options.find { it.colorName == newValue }
                 if (match != null || newValue.isEmpty()) {
                     onOptionSelected(match)
@@ -1398,23 +1415,20 @@ fun SearchableColorDropdown(
                     style = if (selectedOption != null) outlineTextStyle else MaterialTheme.typography.bodySmall
                 )
             },
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .menuAnchor()
+                .onFocusChanged { if (it.isFocused) expanded = true },
             textStyle = if (selectedOption != null) outlineTextStyle else MaterialTheme.typography.bodyMedium,
             trailingIcon = {
-                IconButton(onClick = { onExpandedChange(!expanded) }) {
-                    Icon(
-                        imageVector = if (expanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
-                        contentDescription = null,
-                        tint = if (selectedOption != null) Color.White else MaterialTheme.colorScheme.onSurface
-                    )
-                }
+                ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
             },
             isError = !isValid && searchText.isNotEmpty(),
             singleLine = true,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(
                 onDone = {
-                    onExpandedChange(false)
+                    expanded = false
                     focusManager.clearFocus()
                 }
             ),
@@ -1428,12 +1442,10 @@ fun SearchableColorDropdown(
             )
         )
 
-        DropdownMenu(
+        ExposedDropdownMenu(
             expanded = expanded && filteredOptions.isNotEmpty(),
-            onDismissRequest = { onExpandedChange(false) },
-            offset = DpOffset(x = 0.dp, y = 2.dp),
-            modifier = Modifier.fillMaxWidth(0.8f).heightIn(max = 250.dp),
-            properties = PopupProperties(focusable = false)
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.heightIn(max = 250.dp)
         ) {
             filteredOptions.forEach { option ->
                 val itemBg = Color(0xFF000000 or (option.colorRgb?.toLong() ?: 0L))
@@ -1448,9 +1460,11 @@ fun SearchableColorDropdown(
                     onClick = {
                         searchText = option.colorName ?: ""
                         onOptionSelected(option)
-                        onExpandedChange(false)
+                        expanded = false
+                        focusManager.clearFocus()
                     },
-                    modifier = Modifier.background(itemBg)
+                    modifier = Modifier.background(itemBg),
+                    contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding
                 )
             }
         }
@@ -1479,14 +1493,15 @@ fun SearchableTextDropdown(
     ) {
         OutlinedTextField(
             value = value,
-            onValueChange = {
-                onValueChange(it)
+            onValueChange = { newValue ->
+                onValueChange(newValue)
                 expanded = true
             },
             label = { Text(label) },
             modifier = Modifier
                 .fillMaxWidth()
-                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryEditable, enabled = true),
+                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryEditable, enabled = true)
+                .onFocusChanged { if (it.isFocused) expanded = true },
             trailingIcon = {
                 ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
             },
@@ -1552,14 +1567,15 @@ fun SearchableColorInfoDropdown(
     ) {
         OutlinedTextField(
             value = value,
-            onValueChange = {
-                onValueChange(it)
+            onValueChange = { newValue ->
+                onValueChange(newValue)
                 expanded = true
             },
             label = { Text(label) },
             modifier = Modifier
                 .fillMaxWidth()
-                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryEditable, enabled = true),
+                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryEditable, enabled = true)
+                .onFocusChanged { if (it.isFocused) expanded = true },
             trailingIcon = {
                 ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
             },
@@ -1616,6 +1632,7 @@ fun SearchableColorInfoDropdown(
 fun findClosestColor(targetInt: Int, options: List<ColorInfo>): ColorInfo? {
     if (options.isEmpty()) return null
     val targetColor = Color(targetInt)
+
     return options.minByOrNull { option ->
         val optionRgb = option.colorRgb ?: 0xFFFFFFFF.toInt()
         val optionColor = Color(optionRgb)
@@ -1949,7 +1966,6 @@ fun ManualColorResolutionDialog(
 ) {
     var selectedColor by remember { mutableStateOf<ColorInfo?>(null) }
     var isColorValid by remember { mutableStateOf(false) }
-    var isDropdownExpanded by remember { mutableStateOf(false) }
 
     val suggestions by viewModelVendor.uniqueColors.observeAsState(emptyList())
     var isInitialLoad by remember { mutableStateOf(true) }
@@ -1997,11 +2013,16 @@ fun ManualColorResolutionDialog(
     } else {
         AlertDialog(
             onDismissRequest = onDismiss,
-            title = { Text("Resolve Unmapped Color") },
+            title = { Text("Link Unmapped Color") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text("Identify the color for: ${filament.brand} ${filament.type}")
+                        Text("Link this spool to a known color for tracking:")
+                        Text(
+                            text = "${filament.brand} ${filament.type}",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Bold
+                        )
                         filament.colorRgb?.let { tagColorInt ->
                             Column(
                                 modifier = Modifier
@@ -2031,8 +2052,6 @@ fun ManualColorResolutionDialog(
                         selectedOption = selectedColor,
                         onOptionSelected = { selectedColor = it },
                         targetColorInt = filament.colorRgb,
-                        expanded = isDropdownExpanded,
-                        onExpandedChange = { isDropdownExpanded = it },
                         onValidationChanged = { isColorValid = it }
                     )
 
@@ -2058,7 +2077,7 @@ fun ManualColorResolutionDialog(
                     },
                     enabled = isColorValid && selectedColor != null
                 ) {
-                    Text(if (hasMore) "Update & Next" else "Finish")
+                    Text(if (hasMore) "Link & Next" else "Finish")
                 }
             },
             dismissButton = {
@@ -2092,12 +2111,11 @@ fun ScannedFilamentAcknowledgeDialog(
     }
 
     val suggestions by viewModelVendor.uniqueColors.observeAsState(emptyList())
-    var isDropdownExpanded by remember { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
-            Text(if (isExisting) "Spool Status Update" else if (needsColor) "Label Color" else "Spool Added")
+            Text(if (isExisting) "Spool Status Update" else if (needsColor) "Link Label Color" else "Spool Added")
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -2109,17 +2127,15 @@ fun ScannedFilamentAcknowledgeDialog(
                         AvailabilityStatus.OUT_OF_STOCK -> "Out of Stock"
                         else -> "Unknown"
                     }
-                    Text("Current Status: $statusText\nChoose an action to update this spool.")
+                    Text("Current Status: $statusText\nChoose an action to update this spool or link it to a different color.")
                 } else if (needsColor) {
-                    Text("This is a new variant. Please select the color name from the list:")
+                    Text("This is a new variant. Link it to a known color to enable stock tracking:")
                     SearchableColorDropdown(
                         label = "Color",
                         options = suggestions,
                         selectedOption = selectedColor,
                         onOptionSelected = { selectedColor = it },
                         targetColorInt = filament.colorRgb,
-                        expanded = isDropdownExpanded,
-                        onExpandedChange = { isDropdownExpanded = it },
                         onValidationChanged = { isColorValid = it }
                     )
 
@@ -2268,13 +2284,31 @@ fun NfcScanSheet(
     status: FilamentInventoryViewModel.NfcStatus,
     spoolData: BambuSpoolData?,
     onDismiss: () -> Unit,
-    onAddClick: (data: BambuSpoolData) -> Unit,
-    viewModel: FilamentInventoryViewModel
+    onAddClick: (data: BambuSpoolData, colorName: String?, colorRgb: Int?) -> Unit,
+    viewModel: FilamentInventoryViewModel,
+    vendorFilamentsViewModel: VendorFilamentsViewModel
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scrollState = rememberScrollState()
     val existingFilament by viewModel.scannedExistingFilament.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
+
+    var selectedColor by remember { mutableStateOf<ColorInfo?>(null) }
+    var isColorValid by remember { mutableStateOf(false) }
+    val suggestions by vendorFilamentsViewModel.uniqueColors.observeAsState(emptyList())
+    var isInitialLoad by remember { mutableStateOf(true) }
+    var detailsExpanded by remember { mutableStateOf(false) }
+
+    LaunchedEffect(spoolData) {
+        if (spoolData != null && existingFilament == null) {
+            isInitialLoad = true
+            vendorFilamentsViewModel.setSelectedBrand("Bambu Lab")
+            vendorFilamentsViewModel.setSelectedType(spoolData.detailedType)
+            selectedColor = null
+            delay(400)
+            isInitialLoad = false
+        }
+    }
 
     LaunchedEffect(status) {
         if (status is FilamentInventoryViewModel.NfcStatus.Success) {
@@ -2324,16 +2358,16 @@ fun NfcScanSheet(
                 )
                 Text(text = status.message, color = MaterialTheme.colorScheme.error)
                 Text(
-                    text = "Retrying automatically...",
+                    text = "Scan failed. Auto-retrying...",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(modifier = Modifier.height(8.dp))
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
+
+                OutlinedButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
                     Text("Cancel")
                 }
-            } else if (status is FilamentInventoryViewModel.NfcStatus.Success && spoolData != null) {
+            }
+ else if (status is FilamentInventoryViewModel.NfcStatus.Success && spoolData != null) {
                 // NICE CARD FOR THE SPOOL
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -2366,15 +2400,43 @@ fun NfcScanSheet(
 
                         Spacer(Modifier.height(12.dp))
 
-                        val colorName by produceState<String>(initialValue = "Unknown", spoolData.colorHex) {
-                            value = viewModel.getColorCrossRefBytagColorRgb(
-                                "Bambu Lab",
-                                spoolData.filamentType,
-                                (safeParseColor(spoolData.colorHex) ?: Color.Gray).toArgb()
-                            )?.colorName ?: "Unknown"
-                        }
-
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        if (existingFilament == null) {
+                            if (isInitialLoad || (suggestions.isEmpty() && !isInitialLoad)) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(100.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (isInitialLoad) {
+                                        CircularProgressIndicator()
+                                    } else {
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Text("No matching colors found.", textAlign = TextAlign.Center)
+                                            TextButton(onClick = { vendorFilamentsViewModel.clearFilters() }) {
+                                                Text("Show All Colors")
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                SearchableColorDropdown(
+                                    label = "Select Color",
+                                    options = suggestions,
+                                    selectedOption = selectedColor,
+                                    targetColorInt = (safeParseColor(spoolData.colorHex) ?: Color.Gray).toArgb(),
+                                    onOptionSelected = { selectedColor = it },
+                                    onValidationChanged = { isColorValid = it }
+                                )
+                            }
+                        } else {
+                            val colorName by produceState<String>(initialValue = "...", existingFilament) {
+                                value = viewModel.getColorCrossRefBytagColorRgb(
+                                    existingFilament?.brand ?: "Unknown",
+                                    existingFilament?.type,
+                                    existingFilament?.tagColorRgb
+                                )?.colorName ?: existingFilament?.colorName ?: "Unknown"
+                            }
                             Column {
                                 Text("Color", style = MaterialTheme.typography.labelSmall)
                                 Text(
@@ -2383,27 +2445,29 @@ fun NfcScanSheet(
                                     fontWeight = FontWeight.SemiBold
                                 )
                             }
-                            Column(horizontalAlignment = Alignment.End) {
+                        }
+
+                        Spacer(Modifier.height(12.dp))
+
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Column(horizontalAlignment = Alignment.Start) {
                                 Text("Package", style = MaterialTheme.typography.labelSmall)
-                                // In Bambu tags, detailedType often contains 'Refill' or similar if applicable,
-                                // but we can also infer from spool width or other fields if known.
                                 Text(
                                     if (spoolData.detailedType.contains("Refill", ignoreCase = true)) "Refill" else "With Spool",
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.SemiBold
                                 )
                             }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text("Tag ID", style = MaterialTheme.typography.labelSmall)
+                                Text(
+                                    text = spoolData.uid,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
                         }
-
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            text = "Tag ID: ${spoolData.uid}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                            fontFamily = FontFamily.Monospace
-                        )
-
-                        var detailsExpanded by remember { mutableStateOf(false) }
 
                         HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
 
@@ -2452,7 +2516,6 @@ fun NfcScanSheet(
                             modifier = Modifier.padding(top = 8.dp)
                         )
 
-                        // Status Buttons
                         StatusActionRow(
                             currentStatus = filament.availabilityStatus,
                             onAction = { action ->
@@ -2477,9 +2540,10 @@ fun NfcScanSheet(
                     }
                 } else {
                     Button(
-                        onClick = { onAddClick(spoolData) },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp)
+                        onClick = { onAddClick(spoolData, selectedColor?.colorName, selectedColor?.colorRgb) },
+                        modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        enabled = isColorValid || selectedColor != null
                     ) {
                         Icon(Icons.Default.Add, contentDescription = null)
                         Spacer(Modifier.width(8.dp))

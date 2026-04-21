@@ -84,23 +84,12 @@ fun AvailabilityScreen(
     bambuViewModel: BambuViewModel,
     syncReportViewModel: SyncReportViewModel,
     userPrefs: UserPreferencesRepository,
+    onShowSyncReports: () -> Unit,
     tourTargets: SnapshotStateMap<String, Rect> = remember { mutableStateOf(mutableMapOf<String, Rect>()) }.value as SnapshotStateMap<String, Rect>,
     isTourActive: Boolean = false,
     scrollState: ScrollState = rememberScrollState(),
     expandedTrackers: SnapshotStateMap<Int, Boolean> = remember { mutableStateOf(mutableMapOf<Int, Boolean>()) }.value as SnapshotStateMap<Int, Boolean>
 ) {
-    val showSyncReports by syncReportViewModel.isShowingReports.collectAsStateWithLifecycle()
-
-    if (showSyncReports) {
-        SyncReportsScreen(
-            viewModel = syncReportViewModel,
-            onBack = { syncReportViewModel.setShowingReports(false) },
-            tourTargets = tourTargets,
-            isTourActive = isTourActive
-        )
-        return
-    }
-
     var showAddTrackerDialog by remember { mutableStateOf(false) }
     var showSyncRequiredPopup by remember { mutableStateOf(false) }
     val availabilityTopBarTitleRow1: AvailabilityMenuText? by viewModel.getMenuText("TopMenuRow1").observeAsState()
@@ -131,6 +120,7 @@ fun AvailabilityScreen(
     val scope = rememberCoroutineScope()
 
     val storeRegion by userPrefs.storeRegionFlow.collectAsState(initial = SyncRegion.EU)
+    val showAddToCartTrackers by userPrefs.showAddToCartTrackersFlow.collectAsState(initial = false)
 
     var isInitialized by rememberSaveable { mutableStateOf(false) }
     var showNonEditable by rememberSaveable { mutableStateOf(false) }
@@ -226,7 +216,7 @@ fun AvailabilityScreen(
             text = { Text("A full data sync is already in progress. Would you like to restart it?") },
             confirmButton = {
                 TextButton(onClick = {
-                    FullSyncWorker.enqueue(appContext)
+                    FullSyncWorker.enqueue(appContext, force = true)
                     showRestartSyncDialog = false
                 }) { Text("Restart") }
             },
@@ -486,7 +476,7 @@ fun AvailabilityScreen(
                                     },
                                     onClick = {
                                         showMenu = false
-                                        syncReportViewModel.setShowingReports(true)
+                                        onShowSyncReports()
                                     }
                                 )
                         }
@@ -572,12 +562,6 @@ fun AvailabilityScreen(
     }
 }
 
-/**
- * Represents a single tracking group in the UI.
- * 
- * Displays the tracker name, notification status, and a list of associated filaments.
- * Out-of-date stock data is visually indicated with a yellow warning triangle.
- */
 @Composable
 fun TrackerCard(
     tracker: TrackerWithFilaments,

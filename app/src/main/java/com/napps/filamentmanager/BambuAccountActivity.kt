@@ -94,6 +94,7 @@ fun BambuAccountScreen(
     val debugWorkInfo by viewModel.debugWorkInfo.observeAsState()
     val printers by viewModel.allPrinters.observeAsState(emptyList())
     val isTokenExpired by viewModel.isTokenExpired.collectAsState()
+    val isDecryptionFailed by viewModel.isDecryptionFailed.collectAsState()
     val debugForceTokenExpired by userPrefs.debugForceTokenExpiredFlow.collectAsState(initial = false)
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -128,10 +129,10 @@ fun BambuAccountScreen(
         if (debugWorkInfo?.state == WorkInfo.State.RUNNING) "Manual Syncing..."
         else when (periodicInfo?.state) {
             WorkInfo.State.RUNNING -> "Syncing..."
-            WorkInfo.State.ENQUEUED -> "Scheduled background updates active"
+            WorkInfo.State.ENQUEUED -> "Scheduled availability updates active"
             WorkInfo.State.BLOCKED -> "Pending Network"
             WorkInfo.State.FAILED -> "Sync Failed"
-            else -> "Background Sync Active"
+            else -> "Availability Sync Active"
         }
     }
 
@@ -148,8 +149,17 @@ fun BambuAccountScreen(
                 Row(modifier = Modifier.fillMaxWidth().wrapContentHeight().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Bambu Account", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        val statusText = if (authData == null) "Not logged in" else "Connected"
-                        Text(statusText, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        val statusText = when {
+                            authData == null -> "Not logged in"
+                            isDecryptionFailed -> "Keystore keys mismatch - Please refresh token"
+                            isTokenExpired || debugForceTokenExpired -> "Token expired - Please re-login"
+                            else -> "Connected"
+                        }
+                        val statusColor = if (isDecryptionFailed || isTokenExpired || debugForceTokenExpired) 
+                            MaterialTheme.colorScheme.error 
+                        else 
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        Text(statusText, style = MaterialTheme.typography.labelMedium, color = statusColor)
                     }
 
                     // Region switching menu for Global vs China MQTT brokers.
@@ -195,7 +205,7 @@ fun BambuAccountScreen(
         floatingActionButton = {
             Column(
                 horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 if (authData != null) {
                     // TOUR: Refresh All (Linked to acc_refresh in MainActivity)
@@ -209,6 +219,25 @@ fun BambuAccountScreen(
                         modifier = Modifier.tourTarget("acc_refresh", tourTargets)
                     ) {
                         Icon(Icons.Default.Refresh, contentDescription = "Refresh All")
+                    }
+
+                    FloatingActionButton(
+                        onClick = { showLoginWebView = true },
+                        containerColor = if (isDecryptionFailed || isTokenExpired || debugForceTokenExpired) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = if (isDecryptionFailed || isTokenExpired || debugForceTokenExpired) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.tourTarget("acc_quick_relogin", tourTargets)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+
+                            Icon(Icons.Default.Refresh,
+                                contentDescription = null, modifier = Modifier.size(38.dp))
+                            Icon(
+                                Icons.Default.Person,
+                                contentDescription = "Quick Relogin",
+                                modifier = Modifier.size(16.dp)
+                            )
+
+                        }
                     }
                 }
 
@@ -237,17 +266,6 @@ fun BambuAccountScreen(
                                 WarningIconOverlay()
                             }
                         }
-                    }
-                }
-
-                if ((isTokenExpired || debugForceTokenExpired) && authData != null) {
-                    FloatingActionButton(
-                        onClick = { showExpirationDialog = true },
-                        containerColor = Color(0xFFFFB300),
-                        contentColor = Color.White,
-                        modifier = Modifier.size(48.dp).tourTarget("acc_token_expired", tourTargets)
-                    ) {
-                        Icon(Icons.Default.Warning, contentDescription = "Token Expired")
                     }
                 }
             }

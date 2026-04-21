@@ -5,6 +5,8 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import androidx.core.app.NotificationCompat
 import androidx.work.*
 import com.napps.filamentmanager.MainActivity
@@ -19,6 +21,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+import com.napps.filamentmanager.database.VendorFilament
 import com.napps.filamentmanager.database.VendorFilamentsDao
 import com.napps.filamentmanager.database.TrackerFilamentCrossRef
 import com.napps.filamentmanager.database.SyncReport
@@ -50,10 +53,11 @@ class FullSyncWorker(
         notificationManager.createNotificationChannel(channel)
 
         val notification = NotificationCompat.Builder(appContext, channelId)
-            .setContentTitle("Bambu Filament Manager")
-            .setContentText("Running full sync...")
+            .setContentTitle("Filament Manager")
+            .setContentText("Full Database Sync Running...")
             .setSmallIcon(R.drawable.filamentmanagerlogobw)
             .setOngoing(true)
+            .setSilent(true)
             .build()
 
         return ForegroundInfo(1002, notification)
@@ -66,34 +70,26 @@ class FullSyncWorker(
      * 3. Iteratively syncs each product page for variant details (color, SKU, price, etc.).
      * 4. Updates the database with the results and marks the full sync as completed.
      */
-    override suspend fun doWork(): Result = withContext(Dispatchers.Main) {
+    override suspend fun doWork(): Result {
+        android.util.Log.d("BambuSync", "FullSyncWorker: doWork() started on thread ${Thread.currentThread().name}")
         val database = AppDatabase.getDatabase(appContext)
         val dao = database.vendorFilamentsDao()
         val userPrefs = UserPreferencesRepository(appContext)
         
-        var lastException: Exception? = null
-        val maxRetries = 3
-        
-        while (retryCount < maxRetries) {
-            try {
-                // Increased to 10 minutes for full sync to account for many pages and retries
-                return@withContext withTimeout(600000) { 
-                    runSyncLogic(dao, userPrefs)
-                }
-            } catch (e: Exception) {
-                lastException = e
-                retryCount++
-                if (retryCount < maxRetries) {
-                    val retryMsg = "Sync issue, retrying ($retryCount/$maxRetries)..."
-                    NotificationGroupManager.updateStatus(appContext, "FullSyncWorker", retryMsg, "sync_channel_Status")
-                    delay(10000) // 10 second delay before retry
-                }
+        try {
+            // Increased to 30 minutes for full sync to prevent timeout restarts
+            withTimeout(1800000) { 
+                runSyncLogic(dao, userPrefs)
             }
+            return Result.success()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            android.util.Log.d("BambuSync", "Full Sync Worker cancelled (expected during Restart)")
+            throw e 
+        } catch (e: Exception) {
+            android.util.Log.e("BambuSync", "Full Sync Worker encountered error: ${e.message}", e)
+            handleFailure(dao, e)
+            return Result.success()
         }
-        
-        // If we are here, it means all retries failed
-        lastException?.let { handleFailure(dao, it) }
-        Result.failure()
     }
 
     private suspend fun runSyncLogic(dao: VendorFilamentsDao, userPrefs: UserPreferencesRepository): Result {
@@ -135,21 +131,40 @@ class FullSyncWorker(
             }
 
             // Step 2: Sync each product page
-            val syncResult = syncEngine.sync(productLinks, StartPagesOfVendors.BAMBU_LAB, "Full Sync") { pagesDone, totalPages, success, failed ->
+            val syncResult = syncEngine.sync(productLinks, StartPagesOfVendors.BAMBU_LAB, "Full Sync") { pagesDone: Int, totalPages: Int, success: Int, failed: Int, newFilaments: List<VendorFilament> ->
                 val progressText = "Full sync: $pagesDone/$totalPages | Success: $success | Failed: $failed"
                 NotificationGroupManager.updateStatus(appContext, "FullSyncWorker", progressText, "sync_channel_Status")
                 
                 workerScope.launch(Dispatchers.IO) {
+                    // Incremental database update
+                    for (filament in newFilaments) {
+                        dao.insertOrUpdate(filament)
+                    }
+
                     val menuText = dao.getMenuTextStatic("TopMenuRow1")
                     if (menuText != null) {
                         dao.update(menuText.copy(text = progressText, lastUpdated = null))
                     }
                 }
             }
+
+            // Quality Check: If failure rate is too high (e.g. > 30%), treat as a worker failure to trigger retry
+            val totalPages = productLinks.size
+            val failureRate = if (totalPages > 0) syncResult.errorCount.toDouble() / totalPages else 1.0
+            
+            if (failureRate > 0.3 && totalPages > 5) {
+                throw Exception("Sync quality too low (${syncResult.errorCount}/$totalPages pages failed). Check connection or Cloudflare.")
+            }
             
             val syncList = syncResult.filaments
             
+            // Final Sanity Check: Ensure we actually have data to save
+            if (syncList.isEmpty() && syncResult.errorCount < totalPages) {
+                 throw Exception("Sync finished but found 0 variants. Data parsing might be broken.")
+            }
+            
             withContext(Dispatchers.IO) {
+                // Ensure we don't crash on batch insert if list is huge
                 syncList.forEach { dao.insertOrUpdate(it) }
                 
                 val report = SyncReport(
@@ -174,7 +189,6 @@ class FullSyncWorker(
             }
 
             val finalCount = syncList.size
-            val totalPages = productLinks.size
             val totalVariantsExpected = productLinks.sumOf { it.expectedCount }
             
             val completionTitle = if (finalCount < totalVariantsExpected * 0.9) "Partial Sync Complete" else "Full Sync Complete"
@@ -280,22 +294,56 @@ class FullSyncWorker(
     companion object {
         /**
          * Enqueues a one-time full sync work request.
-         * Replaces any existing work to ensure only one full sync runs at a time.
+         * @param force If true, replaces any existing work (REPLACE). If false, ignores if already running (KEEP).
          */
-        fun enqueue(context: Context) {
+        fun enqueue(context: Context, force: Boolean = false) {
+            android.util.Log.d("BambuSync", "FullSyncWorker: enqueue(force=$force) called")
+            
+            val workManager = WorkManager.getInstance(context)
+            
+            // Explicitly check if it's already running to prevent unnecessary work and logging
+            val workInfos = workManager.getWorkInfosForUniqueWork("FullSyncWork").get()
+            val isAlreadyActive = workInfos.any { !it.state.isFinished }
+            
+            if (isAlreadyActive && !force) {
+                android.util.Log.d("BambuSync", "FullSyncWorker: Sync already active/queued, ignoring enqueue request.")
+                return
+            }
+
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val capabilities = cm.getNetworkCapabilities(cm.activeNetwork)
+            val isConnected = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+
+            // Set initial status so user knows it's triggered
+            CoroutineScope(Dispatchers.IO).launch {
+                val dao = AppDatabase.getDatabase(context).vendorFilamentsDao()
+                val statusText = if (isConnected) "Full sync queued..." else "Waiting for network..."
+                val menuText = dao.getMenuTextStatic("TopMenuRow1")
+                if (menuText != null) {
+                    dao.update(menuText.copy(text = statusText, lastUpdated = null))
+                } else {
+                    dao.insert(AvailabilityMenuText(id = 1, name = "TopMenuRow1", text = statusText))
+                }
+            }
+
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.CONNECTED)
                 .build()
 
             val workRequest = OneTimeWorkRequestBuilder<FullSyncWorker>()
                 .setConstraints(constraints)
-                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                .setBackoffCriteria(
+                    BackoffPolicy.EXPONENTIAL,
+                    WorkRequest.MIN_BACKOFF_MILLIS,
+                    java.util.concurrent.TimeUnit.MILLISECONDS
+                )
                 .addTag("FULL_SYNC")
                 .build()
 
-            WorkManager.getInstance(context).enqueueUniqueWork(
+            val policy = if (force) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP
+            workManager.enqueueUniqueWork(
                 "FullSyncWork",
-                ExistingWorkPolicy.REPLACE,
+                policy,
                 workRequest
             )
         }
