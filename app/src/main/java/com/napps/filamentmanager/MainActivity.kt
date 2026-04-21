@@ -777,6 +777,7 @@ fun FilamentManagerApp(
             val groupedFilaments by viewModelInventory.groupedFilaments.collectAsStateWithLifecycle()
             val lowStock by viewModelInventory.lowStockFilaments.collectAsStateWithLifecycle()
             val trackerList by viewModelVendor.allTrackersWithFilaments.observeAsState(emptyList())
+            val showAddToCartTrackers by userPrefs.showAddToCartTrackersFlow.collectAsState(initial = false)
 
             // TOUR: Inventory Screen Tour (Targets set in InventoryScreen)
             val inventoryStepsPage = remember {
@@ -831,7 +832,7 @@ fun FilamentManagerApp(
             )
 
             // TOUR: Availability Tracker Card Tour (Targets set in AvailabilityActivity)
-            val availabilityStepsCard = remember(trackerList) {
+            val availabilityStepsCard = remember(trackerList, showAddToCartTrackers) {
                 val steps = mutableListOf<TourStep>()
                 val editableTracker = trackerList.find { it.tracker.isEditable }
                 if (editableTracker != null) {
@@ -840,7 +841,9 @@ fun FilamentManagerApp(
                         availabilityExpandedTrackers[editableTracker.tracker.id] = true
                     })
                     steps.add(TourStep("avail_card_copy", "Quickly create a copy of this tracker."))
-                    steps.add(TourStep("avail_card_cart", "Add all filaments in this tracker directly to your Bambu Lab shopping cart."))
+                    if (showAddToCartTrackers) {
+                        steps.add(TourStep("avail_card_cart", "Add all filaments in this tracker directly to your Bambu Lab shopping cart."))
+                    }
                     steps.add(TourStep("avail_card_delete", "Remove this tracker from your list."))
                     steps.add(TourStep("avail_card_bell", "Toggle whether this tracker is active and sends notifications when stock is available."))
                 }

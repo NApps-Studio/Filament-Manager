@@ -14,7 +14,7 @@ android {
         applicationId = "com.napps.filamentmanager"
         minSdk = 31
         targetSdk = 36
-        versionCode = 21
+        versionCode = 22
         versionName = "1.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

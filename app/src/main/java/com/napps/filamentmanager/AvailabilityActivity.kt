@@ -348,6 +348,8 @@ fun AvailabilityScreen(
         }
     }
 
+    val showAddToCartTrackers by userPrefs.showAddToCartTrackersFlow.collectAsState(initial = false)
+
     Scaffold(
         floatingActionButton = {
             Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -596,6 +598,7 @@ fun AvailabilityScreen(
                             cartFilaments = tracker.filaments
                             showWebCart = true
                         },
+                        showCartButton = showAddToCartTrackers,
                         onDuplicate = {
                             viewModel.insertTrackerWithFilaments(
                                 tracker.tracker.copy(name = tracker.tracker.name + "(Copy)",id=0,isEditable = true,isDeletable = true),
@@ -626,6 +629,7 @@ fun TrackerCard(
     onClickCard: () -> Unit,
     onAddToCart: () -> Unit,
     onDuplicate: () -> Unit,
+    showCartButton: Boolean = false,
     tourTargets: SnapshotStateMap<String, Rect> = remember { mutableStateMapOf() },
     isTourTarget: Boolean = false,
     expandedTrackers: SnapshotStateMap<Int, Boolean>
@@ -682,11 +686,13 @@ fun TrackerCard(
                 }) {
                     Icon(Icons.Outlined.ContentCopy, contentDescription = "Duplicate Tracker", tint = Color.White)
                 }
-                IconButton(onClick = onAddToCart, modifier = Modifier.let {
-                    // TOUR: Target for the Cart button
-                    if (isTourTarget) it.tourTarget("avail_card_cart", tourTargets) else it
-                }) {
-                    Icon(Icons.Outlined.ShoppingCart, contentDescription = "Add all to cart", tint = Color.White)
+                if (showCartButton) {
+                    IconButton(onClick = onAddToCart, modifier = Modifier.let {
+                        // TOUR: Target for the Cart button
+                        if (isTourTarget) it.tourTarget("avail_card_cart", tourTargets) else it
+                    }) {
+                        Icon(Icons.Outlined.ShoppingCart, contentDescription = "Add all to cart", tint = Color.White)
+                    }
                 }
                 if (tracker.tracker.isDeletable) {
                     IconButton(onClick = onDelete, modifier = Modifier.let {
